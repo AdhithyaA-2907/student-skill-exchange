@@ -100,7 +100,7 @@ setupInteractions();
 
 // ---------- Live API setup ----------
 // fetch() requests JSON from the existing Express backend. No mock data is used below.
-const API = "http://localhost:5000/api";
+const API = "https://student-skill-exchange-api.onrender.com/api";
 const state = { students: [], skills: [], exchanges: [], activeId: null };
 
 async function request(path, options = {}) {
