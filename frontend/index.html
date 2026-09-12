@@ -17,10 +17,10 @@
       </a>
       <button class="menu-button" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
       <div class="nav-links">
-        <a class="active" href="#top">Dashboard</a>
-        <a href="#my-skills">My Skills</a>
-        <a href="#partners">Discover</a>
-        <a href="#requests">Requests <span class="notification-dot">3</span></a>
+        <a data-route="/" href="/">Dashboard</a>
+        <a data-route="/my-skills" href="/my-skills">My Skills</a>
+        <a data-route="/discover" href="/discover">Discover</a>
+        <a data-route="/requests" href="/requests">Requests <span class="notification-dot">3</span></a>
       </div>
       <div class="profile-menu">
         <button class="new-profile-button" type="button" data-open-modal="student-modal">+ Profile</button>
@@ -44,8 +44,8 @@
           <h1>Learn something new.<br><em>Share what you know.</em></h1>
           <p class="hero-copy">Connect with talented students, exchange practical skills, and grow together beyond the classroom.</p>
           <div class="hero-actions">
-            <button class="button button-light" type="button" data-scroll-to="partners">Find a partner <span>→</span></button>
-            <button class="text-button" type="button" data-scroll-to="my-skills">Manage my skills</button>
+            <a class="button button-light" href="/discover">Find a partner <span>→</span></a>
+            <a class="text-button" href="/my-skills">Manage my skills</a>
           </div>
         </div>
         <aside class="hero-match-card" aria-label="Current skill exchange match">
@@ -54,7 +54,7 @@
             <span class="avatar avatar-me large">AS</span><span class="swap-symbol">⇄</span><span class="avatar avatar-maya large">?</span>
           </div>
           <p id="hero-match-text"><strong>Your next exchange</strong><br><span>Create a request to begin</span></p>
-          <button class="mini-button" type="button" data-scroll-to="requests">View requests</button>
+          <a class="mini-button" href="/requests">View requests</a>
         </aside>
       </div>
     </section>
@@ -67,6 +67,12 @@
         <article class="stat-card"><span class="stat-icon pink">♡</span><div><span>Exchange requests</span><strong id="request-count">0</strong><small>2 need a reply</small></div></article>
         <article class="stat-card"><span class="stat-icon yellow">⚡</span><div><span>Community matches</span><strong>24</strong><small>Suggested for you</small></div></article>
       </div>
+
+      <!-- Dashboard-only activity overview; the detailed tools live on their own routes. -->
+      <section id="dashboard-overview" class="dashboard-overview">
+        <div class="section-heading compact"><div><p class="eyebrow muted">AT A GLANCE</p><h2>Your learning momentum</h2><p>A quick view of your profile and latest activity.</p></div></div>
+        <div class="overview-grid"><article class="overview-card" id="profile-summary"><div class="loading-state">Loading profile…</div></article><article class="overview-card" id="activity-summary"><div class="loading-state">Loading activity…</div></article></div>
+      </section>
 
       <!-- Skill lists: populated with skills for the selected student profile. -->
       <section id="my-skills" class="skill-overview">
@@ -87,13 +93,13 @@
 
       <!-- Partner recommendations: built from live students and skills. -->
       <section id="partners" class="content-section">
-        <div class="section-heading compact"><div><p class="eyebrow muted">DISCOVER</p><h2>Recommended skill partners</h2><p>Great matches based on what you want to learn.</p></div><button class="text-link" type="button">See all partners →</button></div>
+        <div class="section-heading compact"><div><p class="eyebrow muted">DISCOVER</p><h2>Recommended skill partners</h2><p>Great matches based on what you want to learn.</p></div></div>
         <div class="partners-grid" id="partners-list"></div>
       </section>
 
       <!-- Exchange requests: built from the live exchange request API. -->
       <section id="requests" class="content-section requests-section">
-        <div class="section-heading compact"><div><p class="eyebrow muted">COLLABORATE</p><h2>Exchange requests</h2><p>Keep conversations moving and make learning happen.</p></div><button class="text-link" type="button">View all requests →</button></div>
+        <div class="section-heading compact"><div><p class="eyebrow muted">COLLABORATE</p><h2>Exchange requests</h2><p>Keep conversations moving and make learning happen.</p></div></div>
         <div class="request-grid" id="requests-list"></div>
       </section>
     </section>

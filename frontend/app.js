@@ -191,6 +191,18 @@ function updateHero(item) {
   byId("#hero-match-text").innerHTML = `<strong>You + ${safe(other)}</strong><br><span>${safe(item.offered_skill)} <i>for</i> ${safe(item.requested_skill)}</span>`;
 }
 
+// ---------- Dashboard-only live overview ----------
+function renderOverview() {
+  if (!document.body.classList.contains("page-dashboard")) return;
+  const student = currentStudent();
+  const mySkills = student ? state.skills.filter((skill) => skill.student_id === student.student_id) : [];
+  const myExchanges = student ? state.exchanges.filter((exchange) => exchange.sender_id === student.student_id || exchange.receiver_id === student.student_id) : [];
+  byId("#profile-summary").innerHTML = student
+    ? `<div class="overview-profile"><span class="avatar avatar-me">${initialsFor(student.name)}</span><div><h3>${safe(student.name)}</h3><p>${safe(student.department || "Student")}${student.year ? ` · Year ${student.year}` : ""}</p></div></div><span class="overview-tag">${mySkills.length} skills on your profile</span>`
+    : empty("Create a profile to personalize your dashboard.");
+  byId("#activity-summary").innerHTML = `<h3>Recent activity</h3>${myExchanges.length ? myExchanges.slice(0, 2).map((exchange) => `<div class="activity-item"><span class="activity-icon">⇄</span><span>${safe(exchange.offered_skill)} for ${safe(exchange.requested_skill)}<small>${safe(exchange.status)} exchange request</small></span></div>`).join("") : '<p>Connect with a student to start your first exchange.</p>'}`;
+}
+
 // ---------- GET API calls and dashboard refresh ----------
 async function loadStudents() {
   const data = await request("/students"); state.students = data.students || [];
@@ -198,8 +210,8 @@ async function loadStudents() {
   state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : (state.students.some((item) => item.student_id === saved) ? saved : state.students[0]?.student_id || null);
   renderProfile();
 }
-async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; renderSkills(); renderPartners(); }
-async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); }
+async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; renderSkills(); renderPartners(); renderOverview(); }
+async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); renderOverview(); }
 async function refreshAll() {
   ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = '<div class="loading-state">Loading dashboard…</div>'; });
   try { await loadStudents(); await Promise.all([loadSkills(), loadExchanges()]); }
@@ -232,13 +244,25 @@ async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try
 async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast("Exchange status updated."); await loadExchanges(); } catch (error) { toast(error.message); } }
 async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); } catch (error) { toast(error.message); } }
 
+// ---------- Route setup ----------
+// Vercel serves index.html for every route; this chooses the one page to display.
+function configureRoute() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  const pages = { "/": "dashboard", "/my-skills": "my-skills", "/discover": "discover", "/requests": "requests" };
+  const page = pages[path] || "dashboard";
+  document.body.classList.add(`page-${page}`);
+  document.querySelectorAll("[data-route]").forEach((link) => link.classList.toggle("active", link.dataset.route === path));
+  document.title = `${page === "dashboard" ? "Dashboard" : page.replace("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())} | SkillSwap`;
+}
+
 // ---------- Buttons, forms, and startup ----------
 byId(".menu-button").addEventListener("click", (event) => { const links = byId(".nav-links"); event.currentTarget.setAttribute("aria-expanded", String(links.classList.toggle("open"))); });
 document.querySelectorAll("[data-scroll-to]").forEach((button) => button.addEventListener("click", () => byId(`#${button.dataset.scrollTo}`).scrollIntoView({ behavior: "smooth" })));
 document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("[data-open-modal]").forEach((button) => button.addEventListener("click", () => button.dataset.openModal === "skill-modal" ? openSkill(null, button.dataset.skillType) : byId(`#${button.dataset.openModal}`).showModal()));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
-byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); });
+byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); renderOverview(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
 document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
+configureRoute();
 refreshAll();
