@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Student Skill Exchange dashboard">
+  <title>SkillSwap | Student Skill Exchange</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Main navigation for the dashboard sections and profile creation. -->
+  <header class="site-header">
+    <nav class="navbar container" aria-label="Main navigation">
+      <a class="brand" href="#top" aria-label="SkillSwap home">
+        <span class="brand-mark">↗</span>
+        <span>Skill<span>Swap</span></span>
+      </a>
+      <button class="menu-button" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+      <div class="nav-links">
+        <a class="active" href="#top">Dashboard</a>
+        <a href="#my-skills">My Skills</a>
+        <a href="#partners">Discover</a>
+        <a href="#requests">Requests <span class="notification-dot">3</span></a>
+      </div>
+      <div class="profile-menu">
+        <button class="new-profile-button" type="button" data-open-modal="student-modal">+ Profile</button>
+        <button class="bell" type="button" aria-label="Notifications">🔔<span></span></button>
+        <button class="avatar-button" type="button" aria-label="Open profile menu">
+          <span class="avatar avatar-me" id="profile-avatar">AS</span>
+          <span class="profile-name" id="profile-name">Select profile <small>⌄</small></span>
+        </button>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <!-- Hero: gives the student a quick, welcoming overview. -->
+    <section class="hero-section">
+      <div class="hero-glow glow-one"></div>
+      <div class="hero-glow glow-two"></div>
+      <div class="container hero-content">
+        <div>
+          <p class="eyebrow">YOUR LEARNING COMMUNITY</p>
+          <h1>Learn something new.<br><em>Share what you know.</em></h1>
+          <p class="hero-copy">Connect with talented students, exchange practical skills, and grow together beyond the classroom.</p>
+          <div class="hero-actions">
+            <button class="button button-light" type="button" data-scroll-to="partners">Find a partner <span>→</span></button>
+            <button class="text-button" type="button" data-scroll-to="my-skills">Manage my skills</button>
+          </div>
+        </div>
+        <aside class="hero-match-card" aria-label="Current skill exchange match">
+          <div class="match-topline"><span class="pulse-dot"></span> YOUR NEXT EXCHANGE</div>
+          <div class="match-students" id="hero-avatars">
+            <span class="avatar avatar-me large">AS</span><span class="swap-symbol">⇄</span><span class="avatar avatar-maya large">?</span>
+          </div>
+          <p id="hero-match-text"><strong>Your next exchange</strong><br><span>Create a request to begin</span></p>
+          <button class="mini-button" type="button" data-scroll-to="requests">View requests</button>
+        </aside>
+      </div>
+    </section>
+
+    <section class="container dashboard-content">
+      <!-- Statistics: a quick snapshot of learning activity. -->
+      <div class="stats-grid" aria-label="Skill exchange statistics">
+        <article class="stat-card"><span class="stat-icon purple">✦</span><div><span>Skills to share</span><strong id="teach-count">0</strong><small>Ready to teach</small></div></article>
+        <article class="stat-card"><span class="stat-icon blue">⌁</span><div><span>Learning goals</span><strong id="learn-count">0</strong><small>Keep exploring</small></div></article>
+        <article class="stat-card"><span class="stat-icon pink">♡</span><div><span>Exchange requests</span><strong id="request-count">0</strong><small>2 need a reply</small></div></article>
+        <article class="stat-card"><span class="stat-icon yellow">⚡</span><div><span>Community matches</span><strong>24</strong><small>Suggested for you</small></div></article>
+      </div>
+
+      <!-- Skill lists: populated with skills for the selected student profile. -->
+      <section id="my-skills" class="skill-overview">
+        <div class="section-heading"><div><p class="eyebrow muted">YOUR PROFILE</p><h2>Your skill toolkit</h2><p>Add what you know and what you are curious about.</p></div><div class="profile-actions"><label class="profile-select-label">Viewing profile <select id="active-student-select" aria-label="Choose student profile"></select></label><button class="button button-primary" type="button" id="add-skill-button">+ Add a skill</button></div></div>
+        <div class="skill-columns">
+          <article class="skills-card teach-card">
+            <div class="card-title"><span class="card-icon">✦</span><div><h3>Skills I can teach</h3><p>Share your strengths with others.</p></div><span class="skill-count" id="teach-badge">0</span></div>
+            <div class="skill-list" id="teach-skills"></div>
+            <button class="add-inline" type="button" data-open-modal="skill-modal" data-skill-type="TEACH">+ Add teaching skill</button>
+          </article>
+          <article class="skills-card learn-card">
+            <div class="card-title"><span class="card-icon">⌁</span><div><h3>Skills I want to learn</h3><p>Find a peer to guide you.</p></div><span class="skill-count" id="learn-badge">0</span></div>
+            <div class="skill-list" id="learn-skills"></div>
+            <button class="add-inline" type="button" data-open-modal="skill-modal" data-skill-type="LEARN">+ Add learning goal</button>
+          </article>
+        </div>
+      </section>
+
+      <!-- Partner recommendations: built from live students and skills. -->
+      <section id="partners" class="content-section">
+        <div class="section-heading compact"><div><p class="eyebrow muted">DISCOVER</p><h2>Recommended skill partners</h2><p>Great matches based on what you want to learn.</p></div><button class="text-link" type="button">See all partners →</button></div>
+        <div class="partners-grid" id="partners-list"></div>
+      </section>
+
+      <!-- Exchange requests: built from the live exchange request API. -->
+      <section id="requests" class="content-section requests-section">
+        <div class="section-heading compact"><div><p class="eyebrow muted">COLLABORATE</p><h2>Exchange requests</h2><p>Keep conversations moving and make learning happen.</p></div><button class="text-link" type="button">View all requests →</button></div>
+        <div class="request-grid" id="requests-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <!-- Forms are hidden in dialogs until a dashboard action opens them. -->
+  <dialog class="modal" id="student-modal">
+    <form class="modal-card" id="student-form">
+      <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
+      <p class="eyebrow muted">CREATE PROFILE</p><h2>Join the exchange</h2><p class="form-intro">Tell the community a little about yourself.</p>
+      <label>Name<input name="name" type="text" maxlength="100" required placeholder="Your full name"></label>
+      <label>Email<input name="email" type="email" maxlength="100" required placeholder="you@college.edu"></label>
+      <div class="form-row"><label>Department<input name="department" type="text" maxlength="50" placeholder="Computer Science"></label><label>Year<input name="year" type="number" min="1" max="8" placeholder="3"></label></div>
+      <p class="form-error" id="student-form-error"></p><button class="button button-primary form-submit" type="submit">Create profile</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="skill-modal">
+    <form class="modal-card" id="skill-form">
+      <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
+      <input id="skill-id" type="hidden"><p class="eyebrow muted" id="skill-form-kicker">ADD A SKILL</p><h2 id="skill-form-title">Share or learn a skill</h2><p class="form-intro">This is saved to your selected student profile.</p>
+      <label>Student<select id="skill-student-id" required></select></label>
+      <div class="form-row"><label>Skill name<input id="skill-name" type="text" maxlength="100" required placeholder="e.g. Python"></label><label>Skill type<select id="skill-type" required><option value="TEACH">I can teach</option><option value="LEARN">I want to learn</option></select></label></div>
+      <label>Proficiency<input id="skill-proficiency" type="text" maxlength="30" placeholder="e.g. Intermediate"></label>
+      <p class="form-error" id="skill-form-error"></p><button class="button button-primary form-submit" type="submit" id="skill-submit">Save skill</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="exchange-modal">
+    <form class="modal-card" id="exchange-form">
+      <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
+      <p class="eyebrow muted">NEW EXCHANGE</p><h2>Send an exchange request</h2><p class="form-intro">Offer a skill in return for something you would like to learn.</p>
+      <div class="form-row"><label>From<select id="exchange-sender-id" required></select></label><label>To<select id="exchange-receiver-id" required></select></label></div>
+      <div class="form-row"><label>I'm offering<input id="offered-skill" type="text" maxlength="100" required placeholder="e.g. UI Design"></label><label>I'd like to learn<input id="requested-skill" type="text" maxlength="100" required placeholder="e.g. Python"></label></div>
+      <label>Status<select id="exchange-status"><option value="PENDING">Pending</option><option value="ACCEPTED">Accepted</option><option value="REJECTED">Rejected</option><option value="COMPLETED">Completed</option></select></label>
+      <p class="form-error" id="exchange-form-error"></p><button class="button button-primary form-submit" type="submit">Send request</button>
+    </form>
+  </dialog>
+
+  <!-- Small feedback toast for successful actions and API errors. -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <footer><div class="container">SkillSwap <span>·</span> Built by students, for students.</div></footer>
+  <script src="app.js"></script>
+</body>
+</html>

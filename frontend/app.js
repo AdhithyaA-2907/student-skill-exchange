@@ -1,0 +1,244 @@
+/* ---------- Original mock dashboard code (kept only as an inactive reference) ----------
+// This temporary data makes the dashboard feel complete before the API is connected.
+const mockData = {
+  teachSkills: [
+    { emoji: "🎨", name: "UI / UX Design", level: "Advanced" },
+    { emoji: "🌐", name: "HTML & CSS", level: "Advanced" },
+    { emoji: "📣", name: "Public Speaking", level: "Intermediate" }
+  ],
+  learnSkills: [
+    { emoji: "🐍", name: "Python", level: "Beginner" },
+    { emoji: "📊", name: "Data Analysis", level: "Beginner" },
+    { emoji: "🎸", name: "Guitar", level: "Just starting" }
+  ],
+  partners: [
+    { initials: "MP", avatar: "avatar-maya", name: "Maya Patel", course: "Computer Science · 3rd year", match: "96% match", bio: "Python enthusiast who would love to learn how to make products feel beautiful.", skills: ["Python", "Data Science"], availability: "Available this week" },
+    { initials: "RK", avatar: "avatar-rahul", name: "Rahul Kumar", course: "Information Tech · 2nd year", match: "91% match", bio: "Building web apps and always happy to pair up for a focused learning session.", skills: ["JavaScript", "React"], availability: "2 shared interests" },
+    { initials: "JL", avatar: "avatar-jane", name: "Jane Lee", course: "Design · 4th year", match: "88% match", bio: "Curious illustrator with a practical approach to visual storytelling and research.", skills: ["Illustration", "Figma"], availability: "Available Friday" }
+  ],
+  requests: [
+    { initials: "MP", avatar: "avatar-maya", name: "Maya Patel", time: "Today", status: "Pending", offered: "Python basics", requested: "UI design", action: true },
+    { initials: "OK", avatar: "avatar-omar", name: "Omar Khan", time: "Yesterday", status: "Accepted", offered: "Public speaking", requested: "Guitar chords", action: false }
+  ]
+};
+
+// ---------- Rendering helpers ----------
+// Small functions keep the HTML templates and the main setup code easy to read.
+function createSkillRow(skill) {
+  return `<div class="skill-row"><span class="skill-emoji">${skill.emoji}</span><strong>${skill.name}</strong><span class="level">${skill.level}</span></div>`;
+}
+
+function renderSkills() {
+  document.querySelector("#teach-skills").innerHTML = mockData.teachSkills.map(createSkillRow).join("");
+  document.querySelector("#learn-skills").innerHTML = mockData.learnSkills.map(createSkillRow).join("");
+  document.querySelector("#teach-count").textContent = mockData.teachSkills.length;
+  document.querySelector("#learn-count").textContent = mockData.learnSkills.length;
+  document.querySelector("#teach-badge").textContent = mockData.teachSkills.length;
+  document.querySelector("#learn-badge").textContent = mockData.learnSkills.length;
+}
+
+function renderPartners() {
+  document.querySelector("#partners-list").innerHTML = mockData.partners.map((partner) => `
+    <article class="partner-card">
+      <div class="partner-header"><span class="avatar ${partner.avatar}">${partner.initials}</span><div><div class="partner-name">${partner.name}</div><div class="partner-course">${partner.course}</div></div><span class="match-pill">${partner.match}</span></div>
+      <p>${partner.bio}</p>
+      <div class="partner-skills">${partner.skills.map((skill) => `<span>${skill}</span>`).join("")}</div>
+      <div class="partner-footer"><small>● ${partner.availability}</small><button class="connect-button" type="button" data-person="${partner.name}">Connect</button></div>
+    </article>`).join("");
+}
+
+function renderRequests() {
+  document.querySelector("#request-count").textContent = mockData.requests.length + 1;
+  document.querySelector("#requests-list").innerHTML = mockData.requests.map((request) => `
+    <article class="request-card ${request.status.toLowerCase()}">
+      <span class="avatar ${request.avatar}">${request.initials}</span>
+      <div class="request-body"><div class="request-meta"><strong>${request.name}</strong><small>${request.time}</small></div>
+        <div class="swap-details"><b>${request.offered}</b><span>⇄</span><b>${request.requested}</b></div>
+        ${request.action ? `<div class="request-actions"><button class="action-button accept" type="button">Accept exchange</button><button class="action-button decline" type="button">Not now</button></div>` : `<span class="status accepted">✓ ${request.status}</span>`}
+      </div>
+    </article>`).join("");
+}
+
+// ---------- Demo interactions ----------
+// These interactions are visual-only and will later be replaced with backend requests.
+let toastTimer;
+function showToast(message) {
+  const toast = document.querySelector("#toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 3000);
+}
+
+function setupInteractions() {
+  document.querySelector(".menu-button").addEventListener("click", (event) => {
+    const links = document.querySelector(".nav-links");
+    const isOpen = links.classList.toggle("open");
+    event.currentTarget.setAttribute("aria-expanded", String(isOpen));
+  });
+
+  document.querySelectorAll("[data-scroll-to]").forEach((button) => {
+    button.addEventListener("click", () => document.querySelector(`#${button.dataset.scrollTo}`).scrollIntoView({ behavior: "smooth" }));
+  });
+
+  document.addEventListener("click", (event) => {
+    if (event.target.matches(".connect-button")) showToast(`Connection request prepared for ${event.target.dataset.person}.`);
+    if (event.target.matches(".accept")) { event.target.textContent = "Accepted ✓"; event.target.disabled = true; showToast("Exchange request accepted!"); }
+    if (event.target.matches(".decline")) showToast("Request kept in your inbox for now.");
+    if (event.target.matches(".add-inline")) showToast(event.target.dataset.message);
+  });
+
+  document.querySelector("#add-skill-button").addEventListener("click", () => showToast("Skill creation will be connected to the API next."));
+}
+
+// ---------- Dashboard startup ----------
+renderSkills();
+renderPartners();
+renderRequests();
+setupInteractions();
+*/
+
+// ---------- Live API setup ----------
+// fetch() requests JSON from the existing Express backend. No mock data is used below.
+const API = "http://localhost:5000/api";
+const state = { students: [], skills: [], exchanges: [], activeId: null };
+
+async function request(path, options = {}) {
+  try {
+    const response = await fetch(`${API}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "The request could not be completed.");
+    return data;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("The API returned an invalid response.");
+    if (error.message === "Failed to fetch") throw new Error("Cannot reach the backend. Start it on port 5000.");
+    throw error;
+  }
+}
+
+// ---------- Small display helpers ----------
+const byId = (selector) => document.querySelector(selector);
+const currentStudent = () => state.students.find((student) => student.student_id === state.activeId);
+const initialsFor = (name = "?") => name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+const avatarTone = (index) => ["avatar-maya", "avatar-rahul", "avatar-jane", "avatar-omar"][index % 4];
+const safe = (value = "") => String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
+const empty = (message) => `<div class="empty-state">${safe(message)}</div>`;
+let toastTimer;
+function toast(message) { const element = byId("#toast"); element.textContent = message; element.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => element.classList.remove("show"), 3000); }
+function formError(name, message = "") { byId(`#${name}-form-error`).textContent = message; }
+
+function fillStudentSelects() {
+  const options = state.students.length ? state.students.map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("") : '<option value="">Create a profile first</option>';
+  ["#active-student-select", "#skill-student-id", "#exchange-sender-id", "#exchange-receiver-id"].forEach((selector) => { byId(selector).innerHTML = options; });
+  byId("#active-student-select").value = state.activeId || "";
+  byId("#skill-student-id").value = state.activeId || "";
+  byId("#exchange-sender-id").value = state.activeId || "";
+}
+
+function renderProfile() {
+  const student = currentStudent();
+  byId("#profile-avatar").textContent = initialsFor(student?.name);
+  byId("#profile-name").innerHTML = `${safe(student?.name || "Select profile")} <small>⌄</small>`;
+  fillStudentSelects();
+}
+
+// ---------- Render the real Skills API response ----------
+function renderSkills() {
+  const student = currentStudent();
+  const mine = student ? state.skills.filter((skill) => skill.student_id === student.student_id) : [];
+  const teach = mine.filter((skill) => skill.skill_type === "TEACH");
+  const learn = mine.filter((skill) => skill.skill_type === "LEARN");
+  const row = (skill) => `<div class="skill-row"><span class="skill-emoji">${skill.skill_type === "TEACH" ? "✦" : "⌁"}</span><span class="skill-text"><strong>${safe(skill.skill_name)}</strong><small>${safe(skill.proficiency || "No level added")}</small></span><span class="level">${safe(skill.skill_type)}</span><span class="row-actions"><button class="icon-action" type="button" data-edit-skill="${skill.skill_id}" title="Edit skill">✎</button><button class="icon-action delete" type="button" data-delete-skill="${skill.skill_id}" title="Delete skill">×</button></span></div>`;
+  byId("#teach-skills").innerHTML = student ? (teach.map(row).join("") || empty("Add a skill you can teach.")) : empty("Choose or create a profile to see skills.");
+  byId("#learn-skills").innerHTML = student ? (learn.map(row).join("") || empty("Add a learning goal.")) : empty("Choose or create a profile to see skills.");
+  [["#teach-count", teach.length], ["#learn-count", learn.length], ["#teach-badge", teach.length], ["#learn-badge", learn.length]].forEach(([selector, value]) => { byId(selector).textContent = value; });
+}
+
+// ---------- Render student partners using the Students and Skills APIs ----------
+function renderPartners() {
+  const partners = state.students.filter((student) => student.student_id !== state.activeId);
+  if (!state.students.length) { byId("#partners-list").innerHTML = empty("Create a student profile to discover partners."); return; }
+  if (!partners.length) { byId("#partners-list").innerHTML = empty("Add another student profile to see partners."); return; }
+  byId("#partners-list").innerHTML = partners.map((partner, index) => {
+    const skills = state.skills.filter((skill) => skill.student_id === partner.student_id && skill.skill_type === "TEACH").slice(0, 3);
+    return `<article class="partner-card"><div class="partner-header"><span class="avatar ${avatarTone(index)}">${initialsFor(partner.name)}</span><div><div class="partner-name">${safe(partner.name)}</div><div class="partner-course">${safe(partner.department || "Student")}${partner.year ? ` · Year ${partner.year}` : ""}</div></div><span class="match-pill">Skill match</span></div><p>Explore a peer exchange and learn together beyond the classroom.</p><div class="partner-skills">${skills.length ? skills.map((skill) => `<span>${safe(skill.skill_name)}</span>`).join("") : "<span>New to SkillSwap</span>"}</div><div class="partner-footer"><small>● Open to connect</small><button class="connect-button" type="button" data-connect="${partner.student_id}">Connect</button></div></article>`;
+  }).join("");
+}
+
+// ---------- Render and manage live Exchange Request API data ----------
+function renderExchanges() {
+  const student = currentStudent();
+  const exchanges = student ? state.exchanges.filter((item) => item.sender_id === student.student_id || item.receiver_id === student.student_id) : [];
+  byId("#request-count").textContent = exchanges.length;
+  if (!student) { byId("#requests-list").innerHTML = empty("Choose a profile to view requests."); updateHero(); return; }
+  if (!exchanges.length) { byId("#requests-list").innerHTML = empty("No exchanges yet. Connect with a partner to send your first request."); updateHero(); return; }
+  byId("#requests-list").innerHTML = exchanges.map((item, index) => {
+    const sender = item.sender_id === student.student_id;
+    const otherName = sender ? item.receiver_name : item.sender_name;
+    return `<article class="request-card ${item.status.toLowerCase()}"><span class="avatar ${avatarTone(index)}">${initialsFor(otherName)}</span><div class="request-body"><div class="request-meta"><strong>${safe(otherName)}</strong><small>${sender ? "You sent this" : "Sent to you"}</small></div><div class="swap-details"><b>${safe(item.offered_skill)}</b><span>⇄</span><b>${safe(item.requested_skill)}</b></div><div class="request-actions"><select class="request-status-select" data-status-for="${item.request_id}"><option value="PENDING" ${item.status === "PENDING" ? "selected" : ""}>Pending</option><option value="ACCEPTED" ${item.status === "ACCEPTED" ? "selected" : ""}>Accepted</option><option value="REJECTED" ${item.status === "REJECTED" ? "selected" : ""}>Rejected</option><option value="COMPLETED" ${item.status === "COMPLETED" ? "selected" : ""}>Completed</option></select><button class="action-button accept" type="button" data-update-exchange="${item.request_id}">Update</button><button class="action-button delete-request" type="button" data-delete-exchange="${item.request_id}">Delete</button></div></div></article>`;
+  }).join("");
+  updateHero(exchanges[0]);
+}
+
+function updateHero(item) {
+  const student = currentStudent();
+  if (!item || !student) { byId("#hero-match-text").innerHTML = "<strong>Your next exchange</strong><br><span>Create a request to begin</span>"; return; }
+  const other = item.sender_id === student.student_id ? item.receiver_name : item.sender_name;
+  byId("#hero-avatars").innerHTML = `<span class="avatar avatar-me large">${initialsFor(student.name)}</span><span class="swap-symbol">⇄</span><span class="avatar avatar-maya large">${initialsFor(other)}</span>`;
+  byId("#hero-match-text").innerHTML = `<strong>You + ${safe(other)}</strong><br><span>${safe(item.offered_skill)} <i>for</i> ${safe(item.requested_skill)}</span>`;
+}
+
+// ---------- GET API calls and dashboard refresh ----------
+async function loadStudents() {
+  const data = await request("/students"); state.students = data.students || [];
+  const saved = Number(localStorage.getItem("skillSwapActiveStudent"));
+  state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : (state.students.some((item) => item.student_id === saved) ? saved : state.students[0]?.student_id || null);
+  renderProfile();
+}
+async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; renderSkills(); renderPartners(); }
+async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); }
+async function refreshAll() {
+  ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = '<div class="loading-state">Loading dashboard…</div>'; });
+  try { await loadStudents(); await Promise.all([loadSkills(), loadExchanges()]); }
+  catch (error) { ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = `<div class="error-state">${safe(error.message)}</div>`; }); toast(error.message); }
+}
+
+// ---------- Create and update forms ----------
+function openSkill(skill = null, type = "TEACH") {
+  if (!state.students.length) { toast("Create a student profile first."); byId("#student-modal").showModal(); return; }
+  formError("skill"); byId("#skill-id").value = skill?.skill_id || ""; byId("#skill-student-id").value = skill?.student_id || state.activeId; byId("#skill-name").value = skill?.skill_name || ""; byId("#skill-type").value = skill?.skill_type || type; byId("#skill-proficiency").value = skill?.proficiency || ""; byId("#skill-form-title").textContent = skill ? "Update your skill" : "Share or learn a skill"; byId("#skill-submit").textContent = skill ? "Update skill" : "Save skill"; byId("#skill-modal").showModal();
+}
+function openExchange(receiver = "") {
+  if (state.students.length < 2) { toast("Create at least two student profiles first."); return; }
+  formError("exchange"); byId("#exchange-form").reset(); byId("#exchange-sender-id").value = state.activeId; byId("#exchange-receiver-id").value = receiver || state.students.find((student) => student.student_id !== state.activeId)?.student_id; byId("#exchange-modal").showModal();
+}
+async function createStudent(event) {
+  event.preventDefault(); formError("student"); const data = new FormData(event.currentTarget); const body = { name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
+  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; localStorage.setItem("skillSwapActiveStudent", state.activeId); byId("#student-modal").close(); event.currentTarget.reset(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+}
+async function saveSkill(event) {
+  event.preventDefault(); formError("skill"); const id = byId("#skill-id").value; const body = { student_id: Number(byId("#skill-student-id").value), skill_name: byId("#skill-name").value.trim(), skill_type: byId("#skill-type").value, proficiency: byId("#skill-proficiency").value.trim() || null };
+  try { await request(id ? `/skills/${id}` : "/skills", { method: id ? "PUT" : "POST", body: JSON.stringify(body) }); byId("#skill-modal").close(); toast(id ? "Skill updated." : "Skill added."); await loadSkills(); } catch (error) { formError("skill", error.message); }
+}
+async function createExchange(event) {
+  event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim(), status: byId("#exchange-status").value };
+  if (body.sender_id === body.receiver_id) { formError("exchange", "Choose a different student to receive the request."); return; }
+  try { await request("/exchanges", { method: "POST", body: JSON.stringify(body) }); byId("#exchange-modal").close(); toast("Exchange request sent."); await loadExchanges(); } catch (error) { formError("exchange", error.message); }
+}
+async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try { await request(`/skills/${id}`, { method: "DELETE" }); toast("Skill deleted."); await loadSkills(); } catch (error) { toast(error.message); } }
+async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast("Exchange status updated."); await loadExchanges(); } catch (error) { toast(error.message); } }
+async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); } catch (error) { toast(error.message); } }
+
+// ---------- Buttons, forms, and startup ----------
+byId(".menu-button").addEventListener("click", (event) => { const links = byId(".nav-links"); event.currentTarget.setAttribute("aria-expanded", String(links.classList.toggle("open"))); });
+document.querySelectorAll("[data-scroll-to]").forEach((button) => button.addEventListener("click", () => byId(`#${button.dataset.scrollTo}`).scrollIntoView({ behavior: "smooth" })));
+document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+document.querySelectorAll("[data-open-modal]").forEach((button) => button.addEventListener("click", () => button.dataset.openModal === "skill-modal" ? openSkill(null, button.dataset.skillType) : byId(`#${button.dataset.openModal}`).showModal()));
+byId("#add-skill-button").addEventListener("click", () => openSkill());
+byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); });
+byId("#student-form").addEventListener("submit", createStudent); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
+document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
+refreshAll();
