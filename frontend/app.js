@@ -329,12 +329,12 @@ function openExchange(receiver = "") {
   formError("exchange"); byId("#exchange-form").reset(); byId("#exchange-sender-id").value = state.activeId; byId("#exchange-receiver-id").value = receiver || state.students.find((student) => student.student_id !== state.activeId)?.student_id; byId("#exchange-modal").showModal();
 }
 async function createStudent(event) {
-  event.preventDefault(); formError("student"); const data = new FormData(event.currentTarget); const body = { user_id: data.get("user_id").trim(), password: data.get("password"), name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
-  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; byId("#student-modal").close(); event.currentTarget.reset(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+  event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("student"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password"), name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
+  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; form.reset(); byId("#student-modal").close(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
 }
 async function login(event) {
-  event.preventDefault(); formError("login"); const data = new FormData(event.currentTarget); const body = { user_id: data.get("user_id").trim(), password: data.get("password") };
-  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; byId("#login-modal").close(); event.currentTarget.reset(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
+  event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("login"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password") };
+  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; form.reset(); byId("#login-modal").close(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
 }
 async function saveSkill(event) {
   event.preventDefault(); formError("skill"); const id = byId("#skill-id").value; const body = { student_id: Number(byId("#skill-student-id").value), skill_name: byId("#skill-name").value.trim(), skill_type: byId("#skill-type").value, proficiency: byId("#skill-proficiency").value.trim() || null };
@@ -365,6 +365,15 @@ byId(".menu-button").addEventListener("click", (event) => { const links = byId("
 document.querySelectorAll("[data-scroll-to]").forEach((button) => button.addEventListener("click", () => byId(`#${button.dataset.scrollTo}`).scrollIntoView({ behavior: "smooth" })));
 document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("[data-open-modal]").forEach((button) => button.addEventListener("click", () => button.dataset.openModal === "skill-modal" ? openSkill(null, button.dataset.skillType) : byId(`#${button.dataset.openModal}`).showModal()));
+document.querySelectorAll("[data-toggle-password]").forEach((button) => button.addEventListener("click", () => {
+  const input = byId(`#${button.dataset.togglePassword}`);
+  if (!input) return;
+  const isVisible = input.type === "password";
+  input.type = isVisible ? "text" : "password";
+  button.classList.toggle("is-visible", isVisible);
+  button.setAttribute("aria-label", isVisible ? "Hide password" : "Show password");
+  button.setAttribute("aria-pressed", String(isVisible));
+}));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
 byId("#active-student-select").addEventListener("change", () => { byId("#active-student-select").value = state.activeId || ""; formError("login"); byId("#login-modal").showModal(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#login-form").addEventListener("submit", login); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);

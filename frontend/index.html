@@ -118,7 +118,7 @@
       <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
       <p class="eyebrow muted">CREATE PROFILE</p><h2>Join the exchange</h2><p class="form-intro">Tell the community a little about yourself.</p>
       <label>User ID<input name="user_id" type="text" maxlength="50" required placeholder="e.g. student001" autocomplete="username"></label>
-      <label>Password<input name="password" type="password" required placeholder="Create a password" autocomplete="new-password"></label>
+      <label>Password<span class="password-input"><input id="create-profile-password" name="password" type="password" required placeholder="Create a password" autocomplete="new-password"><button class="password-toggle" type="button" data-toggle-password="create-profile-password" aria-label="Show password" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.6"></circle><path class="eye-slash" d="m4 4 16 16"></path></svg></button></span></label>
       <label>Name<input name="name" type="text" maxlength="100" required placeholder="Your full name"></label>
       <label>Email<input name="email" type="email" maxlength="100" required placeholder="you@college.edu"></label>
       <div class="form-row"><label>Department<input name="department" type="text" maxlength="50" placeholder="Computer Science"></label><label>Year<input name="year" type="number" min="1" max="8" placeholder="3"></label></div>
@@ -131,7 +131,7 @@
       <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
       <p class="eyebrow muted">SWITCH PROFILE</p><h2>Log in to your profile</h2><p class="form-intro">Enter your User ID and password to securely switch profiles.</p>
       <label>User ID<input name="user_id" type="text" maxlength="50" required autocomplete="username"></label>
-      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <label>Password<span class="password-input"><input id="login-password" name="password" type="password" required autocomplete="current-password"><button class="password-toggle" type="button" data-toggle-password="login-password" aria-label="Show password" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.6"></circle><path class="eye-slash" d="m4 4 16 16"></path></svg></button></span></label>
       <p class="form-error" id="login-form-error"></p><button class="button button-primary form-submit" type="submit">Switch User</button>
     </form>
   </dialog>
