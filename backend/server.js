@@ -499,6 +499,57 @@ app.get("/api/exchanges/:id", (req, res) => {
   });
 });
 
+// Complete one request by deleting its related notifications and then the request itself.
+// A transaction prevents a partial completion if either database delete fails.
+function completeExchangeRequest(requestId, res) {
+  pool.getConnection((connectionError, connection) => {
+    if (connectionError) return handleDatabaseError(connectionError, res);
+
+    connection.beginTransaction((transactionError) => {
+      if (transactionError) {
+        connection.release();
+        return handleDatabaseError(transactionError, res);
+      }
+
+      connection.query("DELETE FROM notifications WHERE related_request_id = ?", [requestId], (notificationError) => {
+        if (notificationError) {
+          return connection.rollback(() => {
+            connection.release();
+            handleDatabaseError(notificationError, res);
+          });
+        }
+
+        connection.query("DELETE FROM exchange_requests WHERE request_id = ?", [requestId], (deleteError, result) => {
+          if (deleteError) {
+            return connection.rollback(() => {
+              connection.release();
+              handleDatabaseError(deleteError, res);
+            });
+          }
+          if (result.affectedRows === 0) {
+            return connection.rollback(() => {
+              connection.release();
+              res.status(404).json({ success: false, message: "Exchange request not found" });
+            });
+          }
+
+          connection.commit((commitError) => {
+            if (commitError) {
+              return connection.rollback(() => {
+                connection.release();
+                handleDatabaseError(commitError, res);
+              });
+            }
+
+            connection.release();
+            res.status(200).json({ success: true, message: "Exchange completed and removed", request_id: requestId });
+          });
+        });
+      });
+    });
+  });
+}
+
 // Update all fields of one exchange request.
 app.put("/api/exchanges/:id", (req, res) => {
   const requestId = getStudentId(req.params.id);
@@ -521,6 +572,11 @@ app.put("/api/exchanges/:id", (req, res) => {
     const previousRequest = requests[0];
     verifyStudentExists(exchange.senderId, res, () => {
       verifyStudentExists(exchange.receiverId, res, (receiver) => {
+        // Completed exchanges are no longer active: remove this request and only its notifications.
+        if (exchange.status === "COMPLETED") {
+          return completeExchangeRequest(requestId, res);
+        }
+
         const sql = `UPDATE exchange_requests
                      SET sender_id = ?, receiver_id = ?, offered_skill = ?, requested_skill = ?, status = ?
                      WHERE request_id = ?`;
