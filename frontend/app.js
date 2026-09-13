@@ -101,7 +101,17 @@ setupInteractions();
 // ---------- Live API setup ----------
 // fetch() requests JSON from the existing Express backend. No mock data is used below.
 const API = "https://student-skill-exchange-api.onrender.com/api";
-const state = { students: [], skills: [], exchanges: [], notifications: [], unreadNotifications: 0, activeId: null };
+// This key stores only the selected student's numeric ID, never credentials.
+const ACTIVE_PROFILE_KEY = "studentSkillExchange.activeStudentId";
+function getStoredActiveId() {
+  const studentId = Number(localStorage.getItem(ACTIVE_PROFILE_KEY));
+  return Number.isInteger(studentId) && studentId > 0 ? studentId : null;
+}
+function saveActiveProfile(studentId) { localStorage.setItem(ACTIVE_PROFILE_KEY, String(studentId)); }
+function clearStoredActiveProfile() { localStorage.removeItem(ACTIVE_PROFILE_KEY); }
+
+// Restore the non-sensitive profile ID on each route load. It is validated after students load.
+const state = { students: [], skills: [], exchanges: [], notifications: [], unreadNotifications: 0, activeId: getStoredActiveId() };
 
 async function request(path, options = {}) {
   try {
@@ -209,6 +219,7 @@ function renderProfile() {
   const student = currentStudent();
   byId("#profile-avatar").textContent = initialsFor(student?.name);
   byId("#profile-name").innerHTML = `${safe(student?.name || "Select profile")} <small>⌄</small>`;
+  byId("#logout-button").hidden = !student;
   fillStudentSelects();
 }
 
@@ -304,8 +315,11 @@ function renderOverview() {
 // ---------- GET API calls and dashboard refresh ----------
 async function loadStudents() {
   const data = await request("/students"); state.students = data.students || [];
-  // A profile is active only after registration or a successful backend login.
-  state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : null;
+  // A restored profile is valid only while its student record still exists.
+  if (!state.students.some((item) => item.student_id === state.activeId)) {
+    state.activeId = null;
+    clearStoredActiveProfile();
+  }
   renderProfile();
   loadNotifications();
 }
@@ -330,11 +344,11 @@ function openExchange(receiver = "") {
 }
 async function createStudent(event) {
   event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("student"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password"), name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
-  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; form.reset(); byId("#student-modal").close(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; saveActiveProfile(state.activeId); form.reset(); byId("#student-modal").close(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
 }
 async function login(event) {
   event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("login"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password") };
-  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; form.reset(); byId("#login-modal").close(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
+  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; saveActiveProfile(state.activeId); form.reset(); byId("#login-modal").close(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
 }
 async function saveSkill(event) {
   event.preventDefault(); formError("skill"); const id = byId("#skill-id").value; const body = { student_id: Number(byId("#skill-student-id").value), skill_name: byId("#skill-name").value.trim(), skill_type: byId("#skill-type").value, proficiency: byId("#skill-proficiency").value.trim() || null };
@@ -348,6 +362,22 @@ async function createExchange(event) {
 async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try { await request(`/skills/${id}`, { method: "DELETE" }); toast("Skill deleted."); await loadSkills(); } catch (error) { toast(error.message); } }
 async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast("Exchange status updated."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
 async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
+
+function logout() {
+  clearStoredActiveProfile();
+  state.activeId = null;
+  state.notifications = [];
+  state.unreadNotifications = 0;
+  byId("#notification-panel").hidden = true;
+  byId("#notification-bell").setAttribute("aria-expanded", "false");
+  renderProfile();
+  renderSkills();
+  renderPartners();
+  renderExchanges();
+  renderOverview();
+  renderNotifications();
+  toast("Logged out. Log in again to access a profile.");
+}
 
 // ---------- Route setup ----------
 // Vercel serves index.html for every route; this chooses the one page to display.
@@ -375,6 +405,7 @@ document.querySelectorAll("[data-toggle-password]").forEach((button) => button.a
   button.setAttribute("aria-pressed", String(isVisible));
 }));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
+byId("#logout-button").addEventListener("click", logout);
 byId("#active-student-select").addEventListener("change", () => { byId("#active-student-select").value = state.activeId || ""; formError("login"); byId("#login-modal").showModal(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#login-form").addEventListener("submit", login); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
 document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
