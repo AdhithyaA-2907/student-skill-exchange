@@ -32,7 +32,7 @@
             <div class="notification-list" id="notification-list"><p class="notification-empty">Loading notifications…</p></div>
           </section>
         </div>
-        <button class="avatar-button" type="button" aria-label="Open profile menu">
+        <button class="avatar-button" type="button" data-open-modal="login-modal" aria-label="Log in or switch profile">
           <span class="avatar avatar-me" id="profile-avatar">AS</span>
           <span class="profile-name" id="profile-name">Select profile <small>⌄</small></span>
         </button>
@@ -117,10 +117,22 @@
     <form class="modal-card" id="student-form">
       <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
       <p class="eyebrow muted">CREATE PROFILE</p><h2>Join the exchange</h2><p class="form-intro">Tell the community a little about yourself.</p>
+      <label>User ID<input name="user_id" type="text" maxlength="50" required placeholder="e.g. student001" autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required placeholder="Create a password" autocomplete="new-password"></label>
       <label>Name<input name="name" type="text" maxlength="100" required placeholder="Your full name"></label>
       <label>Email<input name="email" type="email" maxlength="100" required placeholder="you@college.edu"></label>
       <div class="form-row"><label>Department<input name="department" type="text" maxlength="50" placeholder="Computer Science"></label><label>Year<input name="year" type="number" min="1" max="8" placeholder="3"></label></div>
       <p class="form-error" id="student-form-error"></p><button class="button button-primary form-submit" type="submit">Create profile</button>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="login-modal">
+    <form class="modal-card" id="login-form">
+      <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
+      <p class="eyebrow muted">SWITCH PROFILE</p><h2>Log in to your profile</h2><p class="form-intro">Enter your User ID and password to securely switch profiles.</p>
+      <label>User ID<input name="user_id" type="text" maxlength="50" required autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <p class="form-error" id="login-form-error"></p><button class="button button-primary form-submit" type="submit">Switch User</button>
     </form>
   </dialog>
 

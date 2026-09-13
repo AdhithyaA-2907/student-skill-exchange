@@ -194,8 +194,12 @@ async function markAllNotificationsRead() {
 }
 
 function fillStudentSelects() {
-  const options = state.students.length ? state.students.map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("") : '<option value="">Create a profile first</option>';
-  ["#active-student-select", "#skill-student-id", "#exchange-sender-id", "#exchange-receiver-id"].forEach((selector) => { byId(selector).innerHTML = options; });
+  const options = state.students.map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("");
+  const activeStudent = currentStudent();
+  byId("#active-student-select").innerHTML = `<option value="">Log in to a profile</option>${options}`;
+  byId("#skill-student-id").innerHTML = activeStudent ? `<option value="${activeStudent.student_id}">${safe(activeStudent.name)}</option>` : '<option value="">Log in first</option>';
+  byId("#exchange-sender-id").innerHTML = activeStudent ? `<option value="${activeStudent.student_id}">${safe(activeStudent.name)}</option>` : '<option value="">Log in first</option>';
+  byId("#exchange-receiver-id").innerHTML = state.students.filter((student) => student.student_id !== state.activeId).map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("") || '<option value="">No other profiles yet</option>';
   byId("#active-student-select").value = state.activeId || "";
   byId("#skill-student-id").value = state.activeId || "";
   byId("#exchange-sender-id").value = state.activeId || "";
@@ -220,14 +224,45 @@ function renderSkills() {
   [["#teach-count", teach.length], ["#learn-count", learn.length], ["#teach-badge", teach.length], ["#learn-badge", learn.length]].forEach(([selector, value]) => { byId(selector).textContent = value; });
 }
 
-// ---------- Render student partners using the Students and Skills APIs ----------
+// ---------- Render partners whose teaching skills match the selected profile's learning goals ----------
 function renderPartners() {
-  const partners = state.students.filter((student) => student.student_id !== state.activeId);
+  const student = currentStudent();
+  const normalizeSkill = (name) => String(name || "").trim().toLowerCase();
+
   if (!state.students.length) { byId("#partners-list").innerHTML = empty("Create a student profile to discover partners."); return; }
-  if (!partners.length) { byId("#partners-list").innerHTML = empty("Add another student profile to see partners."); return; }
-  byId("#partners-list").innerHTML = partners.map((partner, index) => {
-    const skills = state.skills.filter((skill) => skill.student_id === partner.student_id && skill.skill_type === "TEACH").slice(0, 3);
-    return `<article class="partner-card"><div class="partner-header"><span class="avatar ${avatarTone(index)}">${initialsFor(partner.name)}</span><div><div class="partner-name">${safe(partner.name)}</div><div class="partner-course">${safe(partner.department || "Student")}${partner.year ? ` · Year ${partner.year}` : ""}</div></div><span class="match-pill">Skill match</span></div><p>Explore a peer exchange and learn together beyond the classroom.</p><div class="partner-skills">${skills.length ? skills.map((skill) => `<span>${safe(skill.skill_name)}</span>`).join("") : "<span>New to SkillSwap</span>"}</div><div class="partner-footer"><small>● Open to connect</small><button class="connect-button" type="button" data-connect="${partner.student_id}">Connect</button></div></article>`;
+  if (!student) { byId("#partners-list").innerHTML = empty("Choose a profile to discover partners."); return; }
+
+  // Compare normalized names so matching is case-insensitive and ignores extra spaces.
+  const wantedSkills = new Set(state.skills
+    .filter((skill) => skill.student_id === student.student_id && skill.skill_type === "LEARN")
+    .map((skill) => normalizeSkill(skill.skill_name))
+    .filter(Boolean));
+
+  if (!wantedSkills.size) { byId("#partners-list").innerHTML = empty("Add a skill you want to learn to see matching partners."); return; }
+
+  const recommended = [];
+  const seenPartnerIds = new Set();
+  state.students.forEach((partner) => {
+    // Never recommend the selected profile or render a student more than once.
+    if (partner.student_id === student.student_id || seenPartnerIds.has(partner.student_id)) return;
+
+    const matchingSkills = state.skills.filter((skill) =>
+      skill.student_id === partner.student_id &&
+      skill.skill_type === "TEACH" &&
+      wantedSkills.has(normalizeSkill(skill.skill_name))
+    );
+
+    if (matchingSkills.length) {
+      seenPartnerIds.add(partner.student_id);
+      recommended.push({ partner, matchingSkills });
+    }
+  });
+
+  if (!recommended.length) { byId("#partners-list").innerHTML = empty("No matching skill partners yet."); return; }
+  byId("#partners-list").innerHTML = recommended.map(({ partner, matchingSkills }, index) => {
+    // Only show the teaching skills that exactly match this student's learning goals.
+    const displayedSkills = [...new Map(matchingSkills.map((skill) => [normalizeSkill(skill.skill_name), skill])).values()];
+    return `<article class="partner-card"><div class="partner-header"><span class="avatar ${avatarTone(index)}">${initialsFor(partner.name)}</span><div><div class="partner-name">${safe(partner.name)}</div><div class="partner-course">${safe(partner.department || "Student")}${partner.year ? ` · Year ${partner.year}` : ""}</div></div><span class="match-pill">Skill match</span></div><p>Teaches the skill${displayedSkills.length === 1 ? "" : "s"} you want to learn.</p><div class="partner-skills">${displayedSkills.map((skill) => `<span>${safe(skill.skill_name)}</span>`).join("")}</div><div class="partner-footer"><small>● Open to connect</small><button class="connect-button" type="button" data-connect="${partner.student_id}">Connect</button></div></article>`;
   }).join("");
 }
 
@@ -269,8 +304,8 @@ function renderOverview() {
 // ---------- GET API calls and dashboard refresh ----------
 async function loadStudents() {
   const data = await request("/students"); state.students = data.students || [];
-  const saved = Number(localStorage.getItem("skillSwapActiveStudent"));
-  state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : (state.students.some((item) => item.student_id === saved) ? saved : state.students[0]?.student_id || null);
+  // A profile is active only after registration or a successful backend login.
+  state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : null;
   renderProfile();
   loadNotifications();
 }
@@ -285,15 +320,21 @@ async function refreshAll() {
 // ---------- Create and update forms ----------
 function openSkill(skill = null, type = "TEACH") {
   if (!state.students.length) { toast("Create a student profile first."); byId("#student-modal").showModal(); return; }
+  if (!state.activeId) { toast("Log in to manage skills."); byId("#login-modal").showModal(); return; }
   formError("skill"); byId("#skill-id").value = skill?.skill_id || ""; byId("#skill-student-id").value = skill?.student_id || state.activeId; byId("#skill-name").value = skill?.skill_name || ""; byId("#skill-type").value = skill?.skill_type || type; byId("#skill-proficiency").value = skill?.proficiency || ""; byId("#skill-form-title").textContent = skill ? "Update your skill" : "Share or learn a skill"; byId("#skill-submit").textContent = skill ? "Update skill" : "Save skill"; byId("#skill-modal").showModal();
 }
 function openExchange(receiver = "") {
+  if (!state.activeId) { toast("Log in to send an exchange request."); byId("#login-modal").showModal(); return; }
   if (state.students.length < 2) { toast("Create at least two student profiles first."); return; }
   formError("exchange"); byId("#exchange-form").reset(); byId("#exchange-sender-id").value = state.activeId; byId("#exchange-receiver-id").value = receiver || state.students.find((student) => student.student_id !== state.activeId)?.student_id; byId("#exchange-modal").showModal();
 }
 async function createStudent(event) {
-  event.preventDefault(); formError("student"); const data = new FormData(event.currentTarget); const body = { name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
-  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; localStorage.setItem("skillSwapActiveStudent", state.activeId); byId("#student-modal").close(); event.currentTarget.reset(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+  event.preventDefault(); formError("student"); const data = new FormData(event.currentTarget); const body = { user_id: data.get("user_id").trim(), password: data.get("password"), name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
+  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; byId("#student-modal").close(); event.currentTarget.reset(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+}
+async function login(event) {
+  event.preventDefault(); formError("login"); const data = new FormData(event.currentTarget); const body = { user_id: data.get("user_id").trim(), password: data.get("password") };
+  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; byId("#login-modal").close(); event.currentTarget.reset(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
 }
 async function saveSkill(event) {
   event.preventDefault(); formError("skill"); const id = byId("#skill-id").value; const body = { student_id: Number(byId("#skill-student-id").value), skill_name: byId("#skill-name").value.trim(), skill_type: byId("#skill-type").value, proficiency: byId("#skill-proficiency").value.trim() || null };
@@ -325,8 +366,8 @@ document.querySelectorAll("[data-scroll-to]").forEach((button) => button.addEven
 document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("[data-open-modal]").forEach((button) => button.addEventListener("click", () => button.dataset.openModal === "skill-modal" ? openSkill(null, button.dataset.skillType) : byId(`#${button.dataset.openModal}`).showModal()));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
-byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); renderOverview(); loadNotifications(); });
-byId("#student-form").addEventListener("submit", createStudent); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
+byId("#active-student-select").addEventListener("change", () => { byId("#active-student-select").value = state.activeId || ""; formError("login"); byId("#login-modal").showModal(); });
+byId("#student-form").addEventListener("submit", createStudent); byId("#login-form").addEventListener("submit", login); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
 document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
 
 // Bell interactions: toggle the panel, close it outside, and persist read actions through the API.

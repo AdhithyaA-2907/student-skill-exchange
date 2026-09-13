@@ -4,9 +4,13 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
+const { randomBytes, scrypt, timingSafeEqual } = require("crypto");
+const { promisify } = require("util");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const scryptAsync = promisify(scrypt);
+const publicStudentFields = "student_id, user_id, name, email, department, year";
 
 // Allow requests from the frontend and accept JSON request bodies.
 app.use(cors());
@@ -49,14 +53,14 @@ function getStudentId(id) {
   return Number.isInteger(studentId) && studentId > 0 ? studentId : null;
 }
 
-// Return a consistent message when an email already belongs to another student.
+// Return a consistent message when a unique account field is already in use.
 function handleDatabaseError(error, res) {
   console.error("Database query failed:", error.message);
 
   if (error.code === "ER_DUP_ENTRY") {
     return res.status(409).json({
       success: false,
-      message: "A student with this email already exists"
+      message: error.message.includes("user_id") ? "That User ID is already in use" : "A student with this email already exists"
     });
   }
 
@@ -66,25 +70,51 @@ function handleDatabaseError(error, res) {
   });
 }
 
-// Create a new student.
-app.post("/api/students", (req, res) => {
-  const { name, email, department, year } = req.body;
+// Passwords are stored as salted scrypt hashes, never as plain text.
+async function hashPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = await scryptAsync(password, salt, 64);
+  return `scrypt$${salt}$${hash.toString("hex")}`;
+}
 
-  if (!name || !email) {
+async function passwordMatches(password, storedHash) {
+  const [algorithm, salt, hash] = String(storedHash || "").split("$");
+  if (algorithm !== "scrypt" || !salt || !hash) return false;
+
+  const expected = Buffer.from(hash, "hex");
+  const actual = await scryptAsync(password, salt, expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+// Create a new student.
+app.post("/api/students", async (req, res) => {
+  const { user_id, password, name, email, department, year } = req.body;
+  const userId = String(user_id || "").trim();
+
+  if (!userId || !password || !name || !email) {
     return res.status(400).json({
       success: false,
-      message: "Name and email are required"
+      message: "User ID, password, name, and email are required"
     });
   }
 
-  const sql = "INSERT INTO students (name, email, department, year) VALUES (?, ?, ?, ?)";
-  pool.query(sql, [name, email, department || null, year || null], (error, result) => {
+  let passwordHash;
+  try {
+    passwordHash = await hashPassword(password);
+  } catch (error) {
+    console.error("Password hashing failed:", error.message);
+    return res.status(500).json({ success: false, message: "Unable to create the account" });
+  }
+
+  const sql = "INSERT INTO students (user_id, password_hash, name, email, department, year) VALUES (?, ?, ?, ?, ?, ?)";
+  pool.query(sql, [userId, passwordHash, name, email, department || null, year || null], (error, result) => {
     if (error) return handleDatabaseError(error, res);
 
     res.status(201).json({
       success: true,
       student: {
         student_id: result.insertId,
+        user_id: userId,
         name,
         email,
         department: department || null,
@@ -94,9 +124,9 @@ app.post("/api/students", (req, res) => {
   });
 });
 
-// Get every student.
+// Get every student without exposing password hashes.
 app.get("/api/students", (req, res) => {
-  pool.query("SELECT * FROM students", (error, students) => {
+  pool.query(`SELECT ${publicStudentFields} FROM students`, (error, students) => {
     if (error) return handleDatabaseError(error, res);
 
     res.status(200).json({ success: true, students });
@@ -110,13 +140,39 @@ app.get("/api/students/:id", (req, res) => {
     return res.status(400).json({ success: false, message: "Invalid student ID" });
   }
 
-  pool.query("SELECT * FROM students WHERE student_id = ?", [studentId], (error, students) => {
+  pool.query(`SELECT ${publicStudentFields} FROM students WHERE student_id = ?`, [studentId], (error, students) => {
     if (error) return handleDatabaseError(error, res);
     if (students.length === 0) {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
     res.status(200).json({ success: true, student: students[0] });
+  });
+});
+
+// Verify credentials on the server before the frontend changes profiles.
+app.post("/api/auth/login", (req, res) => {
+  const userId = String(req.body.user_id || "").trim();
+  const password = req.body.password;
+  if (!userId || !password) {
+    return res.status(400).json({ success: false, message: "User ID and password are required" });
+  }
+
+  pool.query(`SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ?`, [userId], async (error, students) => {
+    if (error) return handleDatabaseError(error, res);
+    const student = students[0];
+
+    try {
+      if (!student || !(await passwordMatches(password, student.password_hash))) {
+        return res.status(401).json({ success: false, message: "Invalid User ID or password." });
+      }
+    } catch (verificationError) {
+      console.error("Password verification failed:", verificationError.message);
+      return res.status(500).json({ success: false, message: "Unable to verify credentials" });
+    }
+
+    const { password_hash, ...safeStudent } = student;
+    return res.status(200).json({ success: true, student: safeStudent });
   });
 });
 
