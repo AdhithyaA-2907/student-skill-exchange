@@ -20,11 +20,18 @@
         <a data-route="/" href="/">Dashboard</a>
         <a data-route="/my-skills" href="/my-skills">My Skills</a>
         <a data-route="/discover" href="/discover">Discover</a>
-        <a data-route="/requests" href="/requests">Requests <span class="notification-dot">3</span></a>
+        <a data-route="/requests" href="/requests">Requests</a>
       </div>
       <div class="profile-menu">
         <button class="new-profile-button" type="button" data-open-modal="student-modal">+ Profile</button>
-        <button class="bell" type="button" aria-label="Notifications">🔔<span></span></button>
+        <!-- Notification panel: filled with real database notifications in app.js. -->
+        <div class="notification-menu">
+          <button class="bell" id="notification-bell" type="button" aria-label="Notifications" aria-expanded="false" aria-controls="notification-panel">🔔<span id="notification-badge" hidden></span></button>
+          <section class="notification-panel" id="notification-panel" hidden aria-label="Notifications">
+            <div class="notification-header"><div><strong>Notifications</strong><span id="notification-subtitle">Loading…</span></div><button type="button" class="mark-all-button" id="mark-all-read">Mark all as read</button></div>
+            <div class="notification-list" id="notification-list"><p class="notification-empty">Loading notifications…</p></div>
+          </section>
+        </div>
         <button class="avatar-button" type="button" aria-label="Open profile menu">
           <span class="avatar avatar-me" id="profile-avatar">AS</span>
           <span class="profile-name" id="profile-name">Select profile <small>⌄</small></span>

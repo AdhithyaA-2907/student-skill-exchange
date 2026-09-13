@@ -101,7 +101,7 @@ setupInteractions();
 // ---------- Live API setup ----------
 // fetch() requests JSON from the existing Express backend. No mock data is used below.
 const API = "https://student-skill-exchange-api.onrender.com/api";
-const state = { students: [], skills: [], exchanges: [], activeId: null };
+const state = { students: [], skills: [], exchanges: [], notifications: [], unreadNotifications: 0, activeId: null };
 
 async function request(path, options = {}) {
   try {
@@ -129,6 +129,69 @@ const empty = (message) => `<div class="empty-state">${safe(message)}</div>`;
 let toastTimer;
 function toast(message) { const element = byId("#toast"); element.textContent = message; element.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => element.classList.remove("show"), 3000); }
 function formError(name, message = "") { byId(`#${name}-form-error`).textContent = message; }
+
+// ---------- Real notification rendering ----------
+// Notifications are read from the backend table and never created in the browser.
+function notificationTime(createdAt) {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function renderNotifications(errorMessage = "") {
+  const badge = byId("#notification-badge");
+  const list = byId("#notification-list");
+  const subtitle = byId("#notification-subtitle");
+  byId("#mark-all-read").hidden = state.unreadNotifications === 0 || Boolean(errorMessage);
+  if (errorMessage) {
+    badge.hidden = true;
+    subtitle.textContent = "Notifications are unavailable";
+    list.innerHTML = '<p class="notification-empty notification-error">Unable to load notifications.</p>';
+    return;
+  }
+  badge.hidden = state.unreadNotifications === 0;
+  badge.textContent = state.unreadNotifications > 99 ? "99+" : state.unreadNotifications;
+  subtitle.textContent = state.unreadNotifications ? `${state.unreadNotifications} unread` : "You're all caught up";
+  list.innerHTML = state.notifications.length ? state.notifications.map((notification) => `<button class="notification-item ${notification.is_read ? "" : "unread"}" type="button" data-notification-id="${notification.notification_id}" data-request-id="${notification.related_request_id || ""}"><span class="notification-unread-dot"></span><span class="notification-message">${safe(notification.message)}<span class="notification-time">${notificationTime(notification.created_at)}</span></span></button>`).join("") : '<p class="notification-empty">No new notifications</p>';
+}
+
+async function loadNotifications() {
+  if (!state.activeId) {
+    state.notifications = []; state.unreadNotifications = 0; renderNotifications(); return;
+  }
+  const studentId = state.activeId;
+  try {
+    const [notificationsData, countData] = await Promise.all([
+      request(`/notifications/${studentId}`),
+      request(`/notifications/${studentId}/unread-count`)
+    ]);
+    if (state.activeId !== studentId) return;
+    state.notifications = notificationsData.notifications || [];
+    state.unreadNotifications = countData.unread_count || 0;
+    renderNotifications();
+  } catch (error) {
+    // Notification failures stay isolated so the rest of the dashboard continues working.
+    if (state.activeId === studentId) renderNotifications(error.message);
+  }
+}
+
+async function markNotificationRead(notificationId) {
+  if (!state.activeId) return;
+  try {
+    await request(`/notifications/${notificationId}/read`, { method: "PATCH", body: JSON.stringify({ student_id: state.activeId }) });
+    await loadNotifications();
+  } catch (error) { toast("Unable to update this notification."); }
+}
+
+async function markAllNotificationsRead() {
+  if (!state.activeId || !state.unreadNotifications) return;
+  try {
+    await request(`/notifications/${state.activeId}/read-all`, { method: "PATCH", body: JSON.stringify({ student_id: state.activeId }) });
+    await loadNotifications();
+  } catch (error) { toast("Unable to mark notifications as read."); }
+}
 
 function fillStudentSelects() {
   const options = state.students.length ? state.students.map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("") : '<option value="">Create a profile first</option>';
@@ -209,6 +272,7 @@ async function loadStudents() {
   const saved = Number(localStorage.getItem("skillSwapActiveStudent"));
   state.activeId = state.students.some((item) => item.student_id === state.activeId) ? state.activeId : (state.students.some((item) => item.student_id === saved) ? saved : state.students[0]?.student_id || null);
   renderProfile();
+  loadNotifications();
 }
 async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; renderSkills(); renderPartners(); renderOverview(); }
 async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); renderOverview(); }
@@ -238,11 +302,11 @@ async function saveSkill(event) {
 async function createExchange(event) {
   event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim(), status: byId("#exchange-status").value };
   if (body.sender_id === body.receiver_id) { formError("exchange", "Choose a different student to receive the request."); return; }
-  try { await request("/exchanges", { method: "POST", body: JSON.stringify(body) }); byId("#exchange-modal").close(); toast("Exchange request sent."); await loadExchanges(); } catch (error) { formError("exchange", error.message); }
+  try { await request("/exchanges", { method: "POST", body: JSON.stringify(body) }); byId("#exchange-modal").close(); toast("Exchange request sent."); await loadExchanges(); await loadNotifications(); } catch (error) { formError("exchange", error.message); }
 }
 async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try { await request(`/skills/${id}`, { method: "DELETE" }); toast("Skill deleted."); await loadSkills(); } catch (error) { toast(error.message); } }
-async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast("Exchange status updated."); await loadExchanges(); } catch (error) { toast(error.message); } }
-async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); } catch (error) { toast(error.message); } }
+async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast("Exchange status updated."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
+async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
 
 // ---------- Route setup ----------
 // Vercel serves index.html for every route; this chooses the one page to display.
@@ -261,8 +325,31 @@ document.querySelectorAll("[data-scroll-to]").forEach((button) => button.addEven
 document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
 document.querySelectorAll("[data-open-modal]").forEach((button) => button.addEventListener("click", () => button.dataset.openModal === "skill-modal" ? openSkill(null, button.dataset.skillType) : byId(`#${button.dataset.openModal}`).showModal()));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
-byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); renderOverview(); });
+byId("#active-student-select").addEventListener("change", (event) => { state.activeId = Number(event.target.value) || null; localStorage.setItem("skillSwapActiveStudent", state.activeId || ""); renderProfile(); renderSkills(); renderPartners(); renderExchanges(); renderOverview(); loadNotifications(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
 document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
+
+// Bell interactions: toggle the panel, close it outside, and persist read actions through the API.
+byId("#notification-bell").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const panel = byId("#notification-panel");
+  panel.hidden = !panel.hidden;
+  byId("#notification-bell").setAttribute("aria-expanded", String(!panel.hidden));
+});
+byId("#mark-all-read").addEventListener("click", markAllNotificationsRead);
+document.addEventListener("click", (event) => {
+  const notificationButton = event.target.closest("[data-notification-id]");
+  if (notificationButton) {
+    markNotificationRead(Number(notificationButton.dataset.notificationId));
+    // Request notifications open the real Requests route for the selected profile.
+    if (notificationButton.dataset.requestId) window.location.href = "/requests";
+  }
+  if (!byId(".notification-menu").contains(event.target)) {
+    byId("#notification-panel").hidden = true;
+    byId("#notification-bell").setAttribute("aria-expanded", "false");
+  }
+});
 configureRoute();
 refreshAll();
+// Poll lightly for notifications to provide a real-time feel without WebSockets.
+setInterval(loadNotifications, 45000);

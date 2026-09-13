@@ -198,12 +198,23 @@ function getValidatedSkillData(body) {
 
 // Check the parent student before adding or moving a skill.
 function verifyStudentExists(studentId, res, callback) {
-  pool.query("SELECT student_id FROM students WHERE student_id = ?", [studentId], (error, students) => {
+  pool.query("SELECT student_id, name FROM students WHERE student_id = ?", [studentId], (error, students) => {
     if (error) return handleDatabaseError(error, res);
     if (students.length === 0) {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
+    callback(students[0]);
+  });
+}
+
+// Save a notification without preventing a completed exchange action from succeeding.
+function createNotification(studentId, type, message, relatedRequestId, callback = () => {}) {
+  const sql = `INSERT INTO notifications
+               (student_id, type, message, related_request_id)
+               VALUES (?, ?, ?, ?)`;
+  pool.query(sql, [studentId, type, message, relatedRequestId], (error) => {
+    if (error) console.error("Notification creation failed:", error.message);
     callback();
   });
 }
@@ -360,7 +371,7 @@ app.post("/api/exchanges", (req, res) => {
     return res.status(400).json({ success: false, message: exchange.error });
   }
 
-  verifyStudentExists(exchange.senderId, res, () => {
+  verifyStudentExists(exchange.senderId, res, (sender) => {
     verifyStudentExists(exchange.receiverId, res, () => {
       const sql = `INSERT INTO exchange_requests
                    (sender_id, receiver_id, offered_skill, requested_skill, status)
@@ -376,16 +387,19 @@ app.post("/api/exchanges", (req, res) => {
       pool.query(sql, values, (error, result) => {
         if (error) return handleDatabaseError(error, res);
 
-        res.status(201).json({
-          success: true,
-          exchange: {
-            request_id: result.insertId,
-            sender_id: exchange.senderId,
-            receiver_id: exchange.receiverId,
-            offered_skill: exchange.offeredSkill,
-            requested_skill: exchange.requestedSkill,
-            status: exchange.status
-          }
+        const message = `You received a new exchange request from ${sender.name}.`;
+        createNotification(exchange.receiverId, "NEW_EXCHANGE_REQUEST", message, result.insertId, () => {
+          res.status(201).json({
+            success: true,
+            exchange: {
+              request_id: result.insertId,
+              sender_id: exchange.senderId,
+              receiver_id: exchange.receiverId,
+              offered_skill: exchange.offeredSkill,
+              requested_skill: exchange.requestedSkill,
+              status: exchange.status
+            }
+          });
         });
       });
     });
@@ -442,14 +456,15 @@ app.put("/api/exchanges/:id", (req, res) => {
   }
 
   // Check the request before checking its referenced students.
-  pool.query("SELECT request_id FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
+  pool.query("SELECT request_id, sender_id, receiver_id, status FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
     if (error) return handleDatabaseError(error, res);
     if (requests.length === 0) {
       return res.status(404).json({ success: false, message: "Exchange request not found" });
     }
 
+    const previousRequest = requests[0];
     verifyStudentExists(exchange.senderId, res, () => {
-      verifyStudentExists(exchange.receiverId, res, () => {
+      verifyStudentExists(exchange.receiverId, res, (receiver) => {
         const sql = `UPDATE exchange_requests
                      SET sender_id = ?, receiver_id = ?, offered_skill = ?, requested_skill = ?, status = ?
                      WHERE request_id = ?`;
@@ -465,7 +480,7 @@ app.put("/api/exchanges/:id", (req, res) => {
         pool.query(sql, values, (updateError) => {
           if (updateError) return handleDatabaseError(updateError, res);
 
-          res.status(200).json({
+          const sendResponse = () => res.status(200).json({
             success: true,
             exchange: {
               request_id: requestId,
@@ -476,6 +491,14 @@ app.put("/api/exchanges/:id", (req, res) => {
               status: exchange.status
             }
           });
+
+          // Only notify the sender when the request status meaningfully changes.
+          if (previousRequest.status !== exchange.status && exchange.status !== "PENDING") {
+            const message = `Your exchange request with ${receiver.name} was ${exchange.status.toLowerCase()}.`;
+            return createNotification(previousRequest.sender_id, `EXCHANGE_${exchange.status}`, message, requestId, sendResponse);
+          }
+
+          sendResponse();
         });
       });
     });
@@ -496,6 +519,69 @@ app.delete("/api/exchanges/:id", (req, res) => {
     }
 
     res.status(200).json({ success: true, message: "Exchange request deleted successfully" });
+  });
+});
+
+// Get the unread notification count for one selected student profile.
+app.get("/api/notifications/:studentId/unread-count", (req, res) => {
+  const studentId = getStudentId(req.params.studentId);
+  if (!studentId) {
+    return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+
+  pool.query("SELECT COUNT(*) AS unread_count FROM notifications WHERE student_id = ? AND is_read = 0", [studentId], (error, rows) => {
+    if (error) return handleDatabaseError(error, res);
+    res.status(200).json({ success: true, unread_count: rows[0].unread_count });
+  });
+});
+
+// Get newest notifications first for the currently selected student profile.
+app.get("/api/notifications/:studentId", (req, res) => {
+  const studentId = getStudentId(req.params.studentId);
+  if (!studentId) {
+    return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+
+  const sql = `SELECT notification_id, student_id, type, message, related_request_id, is_read, created_at
+               FROM notifications
+               WHERE student_id = ?
+               ORDER BY created_at DESC, notification_id DESC`;
+  pool.query(sql, [studentId], (error, notifications) => {
+    if (error) return handleDatabaseError(error, res);
+    res.status(200).json({ success: true, notifications });
+  });
+});
+
+// Mark one notification as read only when it belongs to the supplied student profile.
+app.patch("/api/notifications/:notificationId/read", (req, res) => {
+  const notificationId = getStudentId(req.params.notificationId);
+  const studentId = getStudentId(req.body.student_id);
+  if (!notificationId || !studentId) {
+    return res.status(400).json({ success: false, message: "A valid notification ID and student ID are required" });
+  }
+
+  const sql = "UPDATE notifications SET is_read = 1 WHERE notification_id = ? AND student_id = ?";
+  pool.query(sql, [notificationId, studentId], (error, result) => {
+    if (error) return handleDatabaseError(error, res);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Notification not found for this student" });
+    }
+
+    res.status(200).json({ success: true, message: "Notification marked as read" });
+  });
+});
+
+// Mark all notifications as read for one selected student profile.
+app.patch("/api/notifications/:studentId/read-all", (req, res) => {
+  const studentId = getStudentId(req.params.studentId);
+  const bodyStudentId = getStudentId(req.body.student_id);
+  if (!studentId || studentId !== bodyStudentId) {
+    return res.status(400).json({ success: false, message: "Student ID does not match the selected profile" });
+  }
+
+  pool.query("UPDATE notifications SET is_read = 1 WHERE student_id = ? AND is_read = 0", [studentId], (error) => {
+    if (error) return handleDatabaseError(error, res);
+    res.status(200).json({ success: true, message: "All notifications marked as read" });
   });
 });
 
