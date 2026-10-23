@@ -394,6 +394,18 @@ function renderExchanges() {
   byId("#pending-caption").textContent = pending.length ? "Awaiting a reply" : "All caught up";
   if (!student) { byId("#requests-list").innerHTML = empty("Choose a profile to view requests."); updateHero(); return; }
   if (!exchanges.length) { byId("#requests-list").innerHTML = empty("No exchanges yet. Connect with a partner to send your first request."); updateHero(); return; }
+  const meetingDetails = (item) => {
+    const date = item.meeting_date ? new Date(`${String(item.meeting_date).slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "Date not proposed";
+    const time = item.meeting_time ? String(item.meeting_time).slice(0, 5) : "Time not proposed";
+    let meetLink = "";
+    try {
+      const url = new URL(item.meeting_link);
+      if (url.protocol === "https:" && url.hostname === "meet.google.com" && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/i.test(url.pathname)) {
+        meetLink = `<a class="meet-link" href="${safe(url.href)}" target="_blank" rel="noopener noreferrer">Join Google Meet</a>`;
+      }
+    } catch { /* Missing or invalid legacy links are not displayed. */ }
+    return `<div class="meeting-details"><strong>Proposed meeting</strong><span>${safe(date)} · ${safe(time)}</span>${meetLink}</div>`;
+  };
   const requestCard = (item, index, outgoing) => {
     const otherName = outgoing ? item.receiver_name : item.sender_name;
     let actions = `<span class="request-status ${item.status.toLowerCase()}">${safe(item.status.charAt(0) + item.status.slice(1).toLowerCase())}</span>`;
@@ -404,7 +416,7 @@ function renderExchanges() {
     } else if (item.status === "ACCEPTED") {
       actions += `<button class="action-button accept" type="button" data-exchange-id="${item.request_id}" data-exchange-action="COMPLETED">Mark completed</button>`;
     }
-    return `<article class="request-card ${item.status.toLowerCase()}"><span class="avatar ${avatarTone(index)}">${initialsFor(otherName)}</span><div class="request-body"><div class="request-meta"><strong>${safe(otherName)}</strong><small>${outgoing ? "You sent this" : "Sent to you"}</small></div><div class="swap-details"><b>${safe(item.offered_skill)}</b><span>⇄</span><b>${safe(item.requested_skill)}</b></div><div class="request-actions">${actions}</div></div></article>`;
+    return `<article class="request-card ${item.status.toLowerCase()}"><span class="avatar ${avatarTone(index)}">${initialsFor(otherName)}</span><div class="request-body"><div class="request-meta"><strong>${safe(otherName)}</strong><small>${outgoing ? "You sent this" : "Sent to you"}</small></div><div class="swap-details"><b>${safe(item.offered_skill)}</b><span>⇄</span><b>${safe(item.requested_skill)}</b></div>${meetingDetails(item)}<div class="request-actions">${actions}</div></div></article>`;
   };
   const incoming = exchanges.filter((item) => item.receiver_id === student.student_id);
   const outgoing = exchanges.filter((item) => item.sender_id === student.student_id);
@@ -511,7 +523,7 @@ async function saveSkill(event) {
   try { await request(id ? `/skills/${id}` : "/skills", { method: id ? "PUT" : "POST", body: JSON.stringify(body) }); byId("#skill-modal").close(); toast(id ? "Skill updated." : "Skill added."); await loadSkills(); } catch (error) { formError("skill", error.message); }
 }
 async function createExchange(event) {
-  event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim() };
+  event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim(), meeting_link: byId("#meeting-link").value.trim(), meeting_date: byId("#meeting-date").value, meeting_time: byId("#meeting-time").value };
   if (body.sender_id === body.receiver_id) { formError("exchange", "Choose a different student to receive the request."); return; }
   try { await request("/exchanges", { method: "POST", body: JSON.stringify(body) }); byId("#exchange-modal").close(); toast("Exchange request sent."); await loadExchanges(); await loadNotifications(); } catch (error) { formError("exchange", error.message); }
 }

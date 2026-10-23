@@ -503,6 +503,35 @@ app.delete("/api/skills/:id", async (req, res) => {
   });
 });
 
+// Validate optional scheduling data before it is saved with a request.
+function getMeetingDetails(body) {
+  const meetingLink = String(body.meeting_link || "").trim();
+  const meetingDate = String(body.meeting_date || "").trim();
+  const meetingTime = String(body.meeting_time || "").trim();
+
+  if (meetingLink) {
+    try {
+      const url = new URL(meetingLink);
+      const isGoogleMeet = url.protocol === "https:" && url.hostname === "meet.google.com" && /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}\/?$/i.test(url.pathname);
+      if (!isGoogleMeet) return { error: "Google Meet link must use the format https://meet.google.com/abc-defg-hij" };
+    } catch {
+      return { error: "Google Meet link must be a valid HTTPS URL" };
+    }
+  }
+
+  if (meetingDate) {
+    const parsedDate = new Date(`${meetingDate}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== meetingDate) {
+      return { error: "Meeting date must be a valid date" };
+    }
+  }
+  if (meetingTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(meetingTime)) {
+    return { error: "Meeting time must use the HH:MM format" };
+  }
+
+  return { meetingLink: meetingLink || null, meetingDate: meetingDate || null, meetingTime: meetingTime || null };
+}
+
 // Validate the fields a sender is allowed to supply for a new exchange request.
 function getValidatedExchangeCreateData(body) {
   const { sender_id, receiver_id, offered_skill, requested_skill } = body;
@@ -516,11 +545,15 @@ function getValidatedExchangeCreateData(body) {
     return { error: "You cannot send an exchange request to yourself" };
   }
 
+  const meetingDetails = getMeetingDetails(body);
+  if (meetingDetails.error) return meetingDetails;
+
   return {
     senderId,
     receiverId,
     offeredSkill: offered_skill,
-    requestedSkill: requested_skill
+    requestedSkill: requested_skill,
+    ...meetingDetails
   };
 }
 
@@ -549,13 +582,16 @@ app.post("/api/exchanges", async (req, res) => {
   verifyStudentExists(exchange.senderId, res, (sender) => {
     verifyStudentExists(exchange.receiverId, res, () => {
       const sql = `INSERT INTO exchange_requests
-                   (sender_id, receiver_id, offered_skill, requested_skill, status)
-                   VALUES (?, ?, ?, ?, ?)`;
+                   (sender_id, receiver_id, offered_skill, requested_skill, meeting_link, meeting_date, meeting_time, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
       const values = [
         exchange.senderId,
         exchange.receiverId,
         exchange.offeredSkill,
         exchange.requestedSkill,
+        exchange.meetingLink,
+        exchange.meetingDate,
+        exchange.meetingTime,
         "PENDING"
       ];
 
@@ -572,6 +608,9 @@ app.post("/api/exchanges", async (req, res) => {
               receiver_id: exchange.receiverId,
               offered_skill: exchange.offeredSkill,
               requested_skill: exchange.requestedSkill,
+              meeting_link: exchange.meetingLink,
+              meeting_date: exchange.meetingDate,
+              meeting_time: exchange.meetingTime,
               status: "PENDING"
             }
           });
@@ -632,7 +671,7 @@ app.put("/api/exchanges/:id", async (req, res) => {
     return res.status(400).json({ success: false, message: requestedStatus.error });
   }
 
-  pool.query("SELECT request_id, sender_id, receiver_id, offered_skill, requested_skill, status FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
+  pool.query("SELECT request_id, sender_id, receiver_id, offered_skill, requested_skill, meeting_link, meeting_date, meeting_time, status FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
     if (error) return handleDatabaseError(error, res);
     if (requests.length === 0) {
       return res.status(404).json({ success: false, message: "Exchange request not found" });
@@ -674,6 +713,9 @@ app.put("/api/exchanges/:id", async (req, res) => {
             receiver_id: previousRequest.receiver_id,
             offered_skill: previousRequest.offered_skill,
             requested_skill: previousRequest.requested_skill,
+            meeting_link: previousRequest.meeting_link,
+            meeting_date: previousRequest.meeting_date,
+            meeting_time: previousRequest.meeting_time,
             status: nextStatus
           }
         });

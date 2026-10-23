@@ -173,6 +173,8 @@
       <p class="form-intro" id="exchange-sender-name"></p>
       <label>To<select id="exchange-receiver-id" required></select></label>
       <div class="form-row"><label>I'm offering<input id="offered-skill" type="text" maxlength="100" required placeholder="e.g. UI Design"></label><label>I'd like to learn<input id="requested-skill" type="text" maxlength="100" required placeholder="e.g. Python"></label></div>
+      <label>Google Meet Link <span class="optional-label">(Optional)</span><input id="meeting-link" type="url" maxlength="255" inputmode="url" placeholder="https://meet.google.com/abc-defg-hij"></label>
+      <div class="form-row"><label>Meeting Date <span class="optional-label">(Optional)</span><input id="meeting-date" type="date"></label><label>Meeting Time <span class="optional-label">(Optional)</span><input id="meeting-time" type="time"></label></div>
       <p class="form-error" id="exchange-form-error"></p><button class="button button-primary form-submit" type="submit">Send request</button>
     </form>
   </dialog>
