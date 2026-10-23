@@ -284,11 +284,11 @@ function fillStudentSelects() {
   const activeStudent = currentStudent();
   byId("#active-student-select").innerHTML = `<option value="">Log in to a profile</option>${options}`;
   byId("#skill-student-id").innerHTML = activeStudent ? `<option value="${activeStudent.student_id}">${safe(activeStudent.name)}</option>` : '<option value="">Log in first</option>';
-  byId("#exchange-sender-id").innerHTML = activeStudent ? `<option value="${activeStudent.student_id}">${safe(activeStudent.name)}</option>` : '<option value="">Log in first</option>';
   byId("#exchange-receiver-id").innerHTML = state.students.filter((student) => student.student_id !== state.activeId).map((student) => `<option value="${student.student_id}">${safe(student.name)}</option>`).join("") || '<option value="">No other profiles yet</option>';
   byId("#active-student-select").value = state.activeId || "";
   byId("#skill-student-id").value = state.activeId || "";
   byId("#exchange-sender-id").value = state.activeId || "";
+  byId("#exchange-sender-name").textContent = activeStudent ? `Sending as ${activeStudent.name}` : "Log in to send a request.";
 }
 
 function renderProfile() {
@@ -394,11 +394,22 @@ function renderExchanges() {
   byId("#pending-caption").textContent = pending.length ? "Awaiting a reply" : "All caught up";
   if (!student) { byId("#requests-list").innerHTML = empty("Choose a profile to view requests."); updateHero(); return; }
   if (!exchanges.length) { byId("#requests-list").innerHTML = empty("No exchanges yet. Connect with a partner to send your first request."); updateHero(); return; }
-  byId("#requests-list").innerHTML = exchanges.map((item, index) => {
-    const sender = item.sender_id === student.student_id;
-    const otherName = sender ? item.receiver_name : item.sender_name;
-    return `<article class="request-card ${item.status.toLowerCase()}"><span class="avatar ${avatarTone(index)}">${initialsFor(otherName)}</span><div class="request-body"><div class="request-meta"><strong>${safe(otherName)}</strong><small>${sender ? "You sent this" : "Sent to you"}</small></div><div class="swap-details"><b>${safe(item.offered_skill)}</b><span>⇄</span><b>${safe(item.requested_skill)}</b></div><div class="request-actions"><select class="request-status-select" data-status-for="${item.request_id}"><option value="PENDING" ${item.status === "PENDING" ? "selected" : ""}>Pending</option><option value="ACCEPTED" ${item.status === "ACCEPTED" ? "selected" : ""}>Accepted</option><option value="REJECTED" ${item.status === "REJECTED" ? "selected" : ""}>Rejected</option><option value="COMPLETED" ${item.status === "COMPLETED" ? "selected" : ""}>Completed</option></select><button class="action-button accept" type="button" data-update-exchange="${item.request_id}">Update</button><button class="action-button delete-request" type="button" data-delete-exchange="${item.request_id}">Delete</button></div></div></article>`;
-  }).join("");
+  const requestCard = (item, index, outgoing) => {
+    const otherName = outgoing ? item.receiver_name : item.sender_name;
+    let actions = `<span class="request-status ${item.status.toLowerCase()}">${safe(item.status.charAt(0) + item.status.slice(1).toLowerCase())}</span>`;
+    if (item.status === "PENDING") {
+      actions = outgoing
+        ? '<span class="request-waiting">Waiting for response…</span>'
+        : `<button class="action-button accept" type="button" data-exchange-id="${item.request_id}" data-exchange-action="ACCEPTED">Accept</button><button class="action-button reject" type="button" data-exchange-id="${item.request_id}" data-exchange-action="REJECTED">Reject</button>`;
+    } else if (item.status === "ACCEPTED") {
+      actions += `<button class="action-button accept" type="button" data-exchange-id="${item.request_id}" data-exchange-action="COMPLETED">Mark completed</button>`;
+    }
+    return `<article class="request-card ${item.status.toLowerCase()}"><span class="avatar ${avatarTone(index)}">${initialsFor(otherName)}</span><div class="request-body"><div class="request-meta"><strong>${safe(otherName)}</strong><small>${outgoing ? "You sent this" : "Sent to you"}</small></div><div class="swap-details"><b>${safe(item.offered_skill)}</b><span>⇄</span><b>${safe(item.requested_skill)}</b></div><div class="request-actions">${actions}</div></div></article>`;
+  };
+  const incoming = exchanges.filter((item) => item.receiver_id === student.student_id);
+  const outgoing = exchanges.filter((item) => item.sender_id === student.student_id);
+  const section = (title, items, isOutgoing, offset) => items.length ? `<section class="request-group"><h3>${title}</h3>${items.map((item, index) => requestCard(item, index + offset, isOutgoing)).join("")}</section>` : "";
+  byId("#requests-list").innerHTML = section("Incoming requests", incoming, false, 0) + section("Outgoing requests", outgoing, true, incoming.length);
   updateHero(exchanges[0]);
 }
 
@@ -500,12 +511,12 @@ async function saveSkill(event) {
   try { await request(id ? `/skills/${id}` : "/skills", { method: id ? "PUT" : "POST", body: JSON.stringify(body) }); byId("#skill-modal").close(); toast(id ? "Skill updated." : "Skill added."); await loadSkills(); } catch (error) { formError("skill", error.message); }
 }
 async function createExchange(event) {
-  event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim(), status: byId("#exchange-status").value };
+  event.preventDefault(); formError("exchange"); const body = { sender_id: Number(byId("#exchange-sender-id").value), receiver_id: Number(byId("#exchange-receiver-id").value), offered_skill: byId("#offered-skill").value.trim(), requested_skill: byId("#requested-skill").value.trim() };
   if (body.sender_id === body.receiver_id) { formError("exchange", "Choose a different student to receive the request."); return; }
   try { await request("/exchanges", { method: "POST", body: JSON.stringify(body) }); byId("#exchange-modal").close(); toast("Exchange request sent."); await loadExchanges(); await loadNotifications(); } catch (error) { formError("exchange", error.message); }
 }
 async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try { await request(`/skills/${id}`, { method: "DELETE" }); toast("Skill deleted."); await loadSkills(); } catch (error) { toast(error.message); } }
-async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast(status === "COMPLETED" ? "Exchange completed and removed." : "Exchange status updated."); await Promise.all([loadExchanges(), loadNotifications()]); } catch (error) { toast(error.message); } }
+async function updateExchange(id, status) { try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ status }) }); toast(status === "COMPLETED" ? "Exchange marked completed." : `Request ${status.toLowerCase()}.`); await Promise.all([loadExchanges(), loadNotifications()]); } catch (error) { toast(error.message); } }
 async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
 
 async function logout() {
@@ -568,7 +579,7 @@ byId("#auth-retry-button").addEventListener("click", initializeSession);
 });
 byId("#active-student-select").addEventListener("change", () => { byId("#active-student-select").value = state.activeId || ""; formError("login"); byId("#login-modal").showModal(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#login-form").addEventListener("submit", login); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
-document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
+document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeAction = event.target.dataset.exchangeAction; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeAction) updateExchange(Number(event.target.dataset.exchangeId), exchangeAction); });
 
 // Bell interactions: toggle the panel, close it outside, and persist read actions through the API.
 byId("#notification-bell").addEventListener("click", (event) => {

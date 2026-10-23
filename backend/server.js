@@ -503,35 +503,42 @@ app.delete("/api/skills/:id", async (req, res) => {
   });
 });
 
-// Validate the fields needed to create or update an exchange request.
-function getValidatedExchangeData(body) {
-  const { sender_id, receiver_id, offered_skill, requested_skill, status } = body;
+// Validate the fields a sender is allowed to supply for a new exchange request.
+function getValidatedExchangeCreateData(body) {
+  const { sender_id, receiver_id, offered_skill, requested_skill } = body;
   const senderId = getStudentId(sender_id);
   const receiverId = getStudentId(receiver_id);
-  const exchangeStatus = status || "PENDING";
-  const allowedStatuses = ["PENDING", "ACCEPTED", "REJECTED", "COMPLETED"];
 
   if (!senderId || !receiverId || !offered_skill || !requested_skill) {
     return { error: "Sender ID, receiver ID, offered skill, and requested skill are required" };
   }
-  if (!allowedStatuses.includes(exchangeStatus)) {
-    return { error: "Status must be PENDING, ACCEPTED, REJECTED, or COMPLETED" };
+  if (senderId === receiverId) {
+    return { error: "You cannot send an exchange request to yourself" };
   }
 
   return {
     senderId,
     receiverId,
     offeredSkill: offered_skill,
-    requestedSkill: requested_skill,
-    status: exchangeStatus
+    requestedSkill: requested_skill
   };
+}
+
+// Status changes are validated separately because the request details cannot be edited here.
+function getRequestedExchangeStatus(body) {
+  const status = String(body.status || "").trim().toUpperCase();
+  if (!status) return { error: "A new exchange status is required" };
+  if (!["ACCEPTED", "REJECTED", "COMPLETED"].includes(status)) {
+    return { error: "Status must be ACCEPTED, REJECTED, or COMPLETED" };
+  }
+  return { status };
 }
 
 // Add a new request between two existing students.
 app.post("/api/exchanges", async (req, res) => {
   const authenticatedStudent = await requireAuthenticatedStudent(req, res);
   if (!authenticatedStudent) return;
-  const exchange = getValidatedExchangeData(req.body);
+  const exchange = getValidatedExchangeCreateData(req.body);
   if (exchange.error) {
     return res.status(400).json({ success: false, message: exchange.error });
   }
@@ -549,7 +556,7 @@ app.post("/api/exchanges", async (req, res) => {
         exchange.receiverId,
         exchange.offeredSkill,
         exchange.requestedSkill,
-        exchange.status
+        "PENDING"
       ];
 
       pool.query(sql, values, (error, result) => {
@@ -565,7 +572,7 @@ app.post("/api/exchanges", async (req, res) => {
               receiver_id: exchange.receiverId,
               offered_skill: exchange.offeredSkill,
               requested_skill: exchange.requestedSkill,
-              status: exchange.status
+              status: "PENDING"
             }
           });
         });
@@ -611,73 +618,21 @@ app.get("/api/exchanges/:id", (req, res) => {
   });
 });
 
-// Complete one request by deleting its related notifications and then the request itself.
-// A transaction prevents a partial completion if either database delete fails.
-function completeExchangeRequest(requestId, res) {
-  pool.getConnection((connectionError, connection) => {
-    if (connectionError) return handleDatabaseError(connectionError, res);
-
-    connection.beginTransaction((transactionError) => {
-      if (transactionError) {
-        connection.release();
-        return handleDatabaseError(transactionError, res);
-      }
-
-      connection.query("DELETE FROM notifications WHERE related_request_id = ?", [requestId], (notificationError) => {
-        if (notificationError) {
-          return connection.rollback(() => {
-            connection.release();
-            handleDatabaseError(notificationError, res);
-          });
-        }
-
-        connection.query("DELETE FROM exchange_requests WHERE request_id = ?", [requestId], (deleteError, result) => {
-          if (deleteError) {
-            return connection.rollback(() => {
-              connection.release();
-              handleDatabaseError(deleteError, res);
-            });
-          }
-          if (result.affectedRows === 0) {
-            return connection.rollback(() => {
-              connection.release();
-              res.status(404).json({ success: false, message: "Exchange request not found" });
-            });
-          }
-
-          connection.commit((commitError) => {
-            if (commitError) {
-              return connection.rollback(() => {
-                connection.release();
-                handleDatabaseError(commitError, res);
-              });
-            }
-
-            connection.release();
-            res.status(200).json({ success: true, message: "Exchange completed and removed", request_id: requestId });
-          });
-        });
-      });
-    });
-  });
-}
-
-// Update all fields of one exchange request.
+// Change a request status only through the approved workflow.
 app.put("/api/exchanges/:id", async (req, res) => {
   const authenticatedStudent = await requireAuthenticatedStudent(req, res);
   if (!authenticatedStudent) return;
   const requestId = getStudentId(req.params.id);
-  const exchange = getValidatedExchangeData(req.body);
+  const requestedStatus = getRequestedExchangeStatus(req.body);
 
   if (!requestId) {
     return res.status(400).json({ success: false, message: "Invalid exchange request ID" });
   }
-  if (exchange.error) {
-    return res.status(400).json({ success: false, message: exchange.error });
+  if (requestedStatus.error) {
+    return res.status(400).json({ success: false, message: requestedStatus.error });
   }
 
-  // Check the request before checking its referenced students.
-  pool.query("SELECT request_id, sender_id, receiver_id, status FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
+  pool.query("SELECT request_id, sender_id, receiver_id, offered_skill, requested_skill, status FROM exchange_requests WHERE request_id = ?", [requestId], (error, requests) => {
     if (error) return handleDatabaseError(error, res);
     if (requests.length === 0) {
       return res.status(404).json({ success: false, message: "Exchange request not found" });
@@ -689,62 +644,38 @@ app.put("/api/exchanges/:id", async (req, res) => {
     if (!isSender && !isReceiver) {
       return res.status(403).json({ success: false, message: "You are not part of this exchange request" });
     }
-    if (exchange.senderId !== previousRequest.sender_id || exchange.receiverId !== previousRequest.receiver_id) {
-      return res.status(400).json({ success: false, message: "Exchange participants cannot be changed" });
-    }
-    if (previousRequest.status === "PENDING" && !isReceiver && exchange.status !== "PENDING") {
+    const nextStatus = requestedStatus.status;
+    const isReceiverDecision = previousRequest.status === "PENDING" && ["ACCEPTED", "REJECTED"].includes(nextStatus);
+    const isParticipantCompletion = previousRequest.status === "ACCEPTED" && nextStatus === "COMPLETED";
+
+    if (isReceiverDecision && !isReceiver) {
       return res.status(403).json({ success: false, message: "Only the receiving student can accept or reject this request" });
     }
-    if (previousRequest.status === "ACCEPTED" && exchange.status === "COMPLETED" && !isSender && !isReceiver) {
-      return res.status(403).json({ success: false, message: "Only exchange participants can complete this request" });
-    }
-    if (previousRequest.status !== exchange.status && !(
-      (previousRequest.status === "PENDING" && ["ACCEPTED", "REJECTED"].includes(exchange.status)) ||
-      (previousRequest.status === "ACCEPTED" && exchange.status === "COMPLETED")
-    )) {
+    if (!isReceiverDecision && !isParticipantCompletion) {
       return res.status(400).json({ success: false, message: "This exchange status change is not allowed" });
     }
-    verifyStudentExists(exchange.senderId, res, () => {
-      verifyStudentExists(exchange.receiverId, res, (receiver) => {
-        // Completed exchanges are no longer active: remove this request and only its notifications.
-        if (exchange.status === "COMPLETED") {
-          return completeExchangeRequest(requestId, res);
-        }
 
-        const sql = `UPDATE exchange_requests
-                     SET sender_id = ?, receiver_id = ?, offered_skill = ?, requested_skill = ?, status = ?
-                     WHERE request_id = ?`;
-        const values = [
-          exchange.senderId,
-          exchange.receiverId,
-          exchange.offeredSkill,
-          exchange.requestedSkill,
-          exchange.status,
-          requestId
-        ];
+    pool.query("UPDATE exchange_requests SET status = ? WHERE request_id = ?", [nextStatus, requestId], (updateError) => {
+      if (updateError) return handleDatabaseError(updateError, res);
 
-        pool.query(sql, values, (updateError) => {
-          if (updateError) return handleDatabaseError(updateError, res);
+      const notifyStudentId = nextStatus === "COMPLETED"
+        ? (isSender ? previousRequest.receiver_id : previousRequest.sender_id)
+        : previousRequest.sender_id;
+      const message = nextStatus === "COMPLETED"
+        ? "Your accepted exchange was marked completed."
+        : `Your exchange request was ${nextStatus.toLowerCase()}.`;
 
-          const sendResponse = () => res.status(200).json({
-            success: true,
-            exchange: {
-              request_id: requestId,
-              sender_id: exchange.senderId,
-              receiver_id: exchange.receiverId,
-              offered_skill: exchange.offeredSkill,
-              requested_skill: exchange.requestedSkill,
-              status: exchange.status
-            }
-          });
-
-          // Only notify the sender when the request status meaningfully changes.
-          if (previousRequest.status !== exchange.status && exchange.status !== "PENDING") {
-            const message = `Your exchange request with ${receiver.name} was ${exchange.status.toLowerCase()}.`;
-            return createNotification(previousRequest.sender_id, `EXCHANGE_${exchange.status}`, message, requestId, sendResponse);
+      createNotification(notifyStudentId, `EXCHANGE_${nextStatus}`, message, requestId, () => {
+        res.status(200).json({
+          success: true,
+          exchange: {
+            request_id: previousRequest.request_id,
+            sender_id: previousRequest.sender_id,
+            receiver_id: previousRequest.receiver_id,
+            offered_skill: previousRequest.offered_skill,
+            requested_skill: previousRequest.requested_skill,
+            status: nextStatus
           }
-
-          sendResponse();
         });
       });
     });

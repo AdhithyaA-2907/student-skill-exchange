@@ -169,9 +169,10 @@
     <form class="modal-card" id="exchange-form">
       <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
       <p class="eyebrow muted">NEW EXCHANGE</p><h2>Send an exchange request</h2><p class="form-intro">Offer a skill in return for something you would like to learn.</p>
-      <div class="form-row"><label>From<select id="exchange-sender-id" required></select></label><label>To<select id="exchange-receiver-id" required></select></label></div>
+      <input id="exchange-sender-id" type="hidden">
+      <p class="form-intro" id="exchange-sender-name"></p>
+      <label>To<select id="exchange-receiver-id" required></select></label>
       <div class="form-row"><label>I'm offering<input id="offered-skill" type="text" maxlength="100" required placeholder="e.g. UI Design"></label><label>I'd like to learn<input id="requested-skill" type="text" maxlength="100" required placeholder="e.g. Python"></label></div>
-      <label>Status<select id="exchange-status"><option value="PENDING">Pending</option><option value="ACCEPTED">Accepted</option><option value="REJECTED">Rejected</option><option value="COMPLETED">Completed</option></select></label>
       <p class="form-error" id="exchange-form-error"></p><button class="button button-primary form-submit" type="submit">Send request</button>
     </form>
   </dialog>
