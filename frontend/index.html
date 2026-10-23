@@ -7,7 +7,17 @@
   <title>SkillSwap | Student Skill Exchange</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="auth-loading">
+  <!-- Authentication gate: the app stays hidden until a saved session is verified. -->
+  <section class="auth-gate" id="auth-gate" aria-live="polite">
+    <div class="auth-gate-card">
+      <span class="brand-mark">↗</span>
+      <p class="eyebrow muted">SKILLSWAP</p>
+      <h1 id="auth-gate-title">Checking your session…</h1>
+      <p id="auth-gate-message">Please wait while we securely load your profile.</p>
+      <div class="auth-gate-actions"><button class="button button-primary" id="auth-login-button" type="button" hidden>Log in</button><button class="text-link" id="auth-retry-button" type="button" hidden>Try again</button><button class="text-link" id="auth-create-button" type="button" hidden>Create a profile</button></div>
+    </div>
+  </section>
   <!-- Main navigation for the dashboard sections and profile creation. -->
   <header class="site-header">
     <nav class="navbar container" aria-label="Main navigation">
@@ -72,8 +82,8 @@
       <div class="stats-grid" aria-label="Skill exchange statistics">
         <article class="stat-card"><span class="stat-icon purple">✦</span><div><span>Skills to share</span><strong id="teach-count">0</strong><small>Ready to teach</small></div></article>
         <article class="stat-card"><span class="stat-icon blue">⌁</span><div><span>Learning goals</span><strong id="learn-count">0</strong><small>Keep exploring</small></div></article>
-        <article class="stat-card"><span class="stat-icon pink">♡</span><div><span>Exchange requests</span><strong id="request-count">0</strong><small>2 need a reply</small></div></article>
-        <article class="stat-card"><span class="stat-icon yellow">⚡</span><div><span>Community matches</span><strong>24</strong><small>Suggested for you</small></div></article>
+        <article class="stat-card"><span class="stat-icon pink">♡</span><div><span>Pending requests</span><strong id="pending-count">0</strong><small id="pending-caption">Awaiting a reply</small></div></article>
+        <article class="stat-card"><span class="stat-icon yellow">⚡</span><div><span>Accepted exchanges</span><strong id="accepted-count">0</strong><small>Ready to learn together</small></div></article>
       </div>
 
       <!-- Dashboard-only activity overview; the detailed tools live on their own routes. -->
@@ -102,6 +112,13 @@
       <!-- Partner recommendations: built from live students and skills. -->
       <section id="partners" class="content-section">
         <div class="section-heading compact"><div><p class="eyebrow muted">DISCOVER</p><h2>Recommended skill partners</h2><p>Great matches based on what you want to learn.</p></div></div>
+        <!-- Filters use the already loaded API data, so they respond immediately without extra requests. -->
+        <div class="discover-filters" aria-label="Discover filters">
+          <input id="discover-search" type="search" placeholder="Search a student or skill" aria-label="Search students or skills">
+          <select id="discover-department" aria-label="Filter by department"><option value="">All departments</option></select>
+          <select id="discover-year" aria-label="Filter by year"><option value="">All years</option></select>
+          <select id="discover-proficiency" aria-label="Filter by proficiency"><option value="">All proficiency levels</option></select>
+        </div>
         <div class="partners-grid" id="partners-list"></div>
       </section>
 

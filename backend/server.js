@@ -4,13 +4,14 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
-const { randomBytes, scrypt, timingSafeEqual } = require("crypto");
+const { createHash, randomBytes, scrypt, timingSafeEqual } = require("crypto");
 const { promisify } = require("util");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const scryptAsync = promisify(scrypt);
 const publicStudentFields = "student_id, user_id, name, email, department, year";
+const SESSION_DURATION_DAYS = 7;
 
 // Allow requests from the frontend and accept JSON request bodies.
 app.use(cors());
@@ -86,6 +87,54 @@ async function passwordMatches(password, storedHash) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+// Tokens are random, but only their SHA-256 hashes are stored in MySQL.
+function hashSessionToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function getSessionToken(req) {
+  const authorization = req.get("authorization") || "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7) : req.get("x-session-token");
+}
+
+async function createSession(studentId) {
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000);
+  await pool.promise().query(
+    "INSERT INTO auth_sessions (student_id, token_hash, expires_at) VALUES (?, ?, ?)",
+    [studentId, hashSessionToken(token), expiresAt]
+  );
+  return token;
+}
+
+// Returns the authenticated student, or sends a 401 response and returns null.
+async function requireAuthenticatedStudent(req, res) {
+  const token = getSessionToken(req);
+  if (!token) {
+    res.status(401).json({ success: false, message: "Please sign in to continue" });
+    return null;
+  }
+
+  try {
+    const [rows] = await pool.promise().query(
+      `SELECT ${publicStudentFields}
+       FROM auth_sessions
+       JOIN students ON auth_sessions.student_id = students.student_id
+       WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > NOW()`,
+      [hashSessionToken(token)]
+    );
+    if (!rows.length) {
+      res.status(401).json({ success: false, message: "Your session has expired. Please sign in again." });
+      return null;
+    }
+    return rows[0];
+  } catch (error) {
+    console.error("Session verification failed:", error.message);
+    res.status(500).json({ success: false, message: "Unable to verify your session" });
+    return null;
+  }
+}
+
 // Create a new student.
 app.post("/api/students", async (req, res) => {
   const { user_id, password, name, email, department, year } = req.body;
@@ -107,20 +156,27 @@ app.post("/api/students", async (req, res) => {
   }
 
   const sql = "INSERT INTO students (user_id, password_hash, name, email, department, year) VALUES (?, ?, ?, ?, ?, ?)";
-  pool.query(sql, [userId, passwordHash, name, email, department || null, year || null], (error, result) => {
+  pool.query(sql, [userId, passwordHash, name, email, department || null, year || null], async (error, result) => {
     if (error) return handleDatabaseError(error, res);
 
-    res.status(201).json({
-      success: true,
-      student: {
-        student_id: result.insertId,
-        user_id: userId,
-        name,
-        email,
-        department: department || null,
-        year: year || null
-      }
-    });
+    try {
+      const sessionToken = await createSession(result.insertId);
+      res.status(201).json({
+        success: true,
+        session_token: sessionToken,
+        student: {
+          student_id: result.insertId,
+          user_id: userId,
+          name,
+          email,
+          department: department || null,
+          year: year || null
+        }
+      });
+    } catch (sessionError) {
+      console.error("Session creation failed:", sessionError.message);
+      res.status(500).json({ success: false, message: "Profile created, but sign-in could not be completed" });
+    }
   });
 });
 
@@ -172,17 +228,49 @@ app.post("/api/auth/login", (req, res) => {
     }
 
     const { password_hash, ...safeStudent } = student;
-    return res.status(200).json({ success: true, student: safeStudent });
+    try {
+      const sessionToken = await createSession(safeStudent.student_id);
+      return res.status(200).json({ success: true, session_token: sessionToken, student: safeStudent });
+    } catch (sessionError) {
+      console.error("Session creation failed:", sessionError.message);
+      return res.status(500).json({ success: false, message: "Unable to start a session" });
+    }
   });
 });
 
+// Verify a saved token before the frontend displays an authenticated dashboard.
+app.get("/api/auth/session", async (req, res) => {
+  const student = await requireAuthenticatedStudent(req, res);
+  if (!student) return;
+  res.status(200).json({ success: true, student });
+});
+
+// Invalidate only the current token. The browser also clears its local token.
+app.post("/api/auth/logout", async (req, res) => {
+  const token = getSessionToken(req);
+  if (!token) return res.status(200).json({ success: true, message: "Logged out" });
+
+  try {
+    await pool.promise().query("DELETE FROM auth_sessions WHERE token_hash = ?", [hashSessionToken(token)]);
+    res.status(200).json({ success: true, message: "Logged out" });
+  } catch (error) {
+    console.error("Logout failed:", error.message);
+    res.status(500).json({ success: false, message: "Unable to end the server session" });
+  }
+});
+
 // Update all editable fields for one student.
-app.put("/api/students/:id", (req, res) => {
+app.put("/api/students/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const studentId = getStudentId(req.params.id);
   const { name, email, department, year } = req.body;
 
   if (!studentId) {
     return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only update your own profile" });
   }
   if (!name || !email) {
     return res.status(400).json({
@@ -213,10 +301,15 @@ app.put("/api/students/:id", (req, res) => {
 });
 
 // Delete one student by ID.
-app.delete("/api/students/:id", (req, res) => {
+app.delete("/api/students/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const studentId = getStudentId(req.params.id);
   if (!studentId) {
     return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only delete your own profile" });
   }
 
   pool.query("DELETE FROM students WHERE student_id = ?", [studentId], (error, result) => {
@@ -276,10 +369,15 @@ function createNotification(studentId, type, message, relatedRequestId, callback
 }
 
 // Add a skill that a student can teach or wants to learn.
-app.post("/api/skills", (req, res) => {
+app.post("/api/skills", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const skill = getValidatedSkillData(req.body);
   if (skill.error) {
     return res.status(400).json({ success: false, message: skill.error });
+  }
+  if (authenticatedStudent.student_id !== skill.studentId) {
+    return res.status(403).json({ success: false, message: "You can only add skills to your own profile" });
   }
 
   verifyStudentExists(skill.studentId, res, () => {
@@ -339,7 +437,9 @@ app.get("/api/skills/:id", (req, res) => {
 });
 
 // Update all editable fields for one skill.
-app.put("/api/skills/:id", (req, res) => {
+app.put("/api/skills/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const skillId = getStudentId(req.params.id);
   const skill = getValidatedSkillData(req.body);
 
@@ -348,6 +448,9 @@ app.put("/api/skills/:id", (req, res) => {
   }
   if (skill.error) {
     return res.status(400).json({ success: false, message: skill.error });
+  }
+  if (authenticatedStudent.student_id !== skill.studentId) {
+    return res.status(403).json({ success: false, message: "You can only update skills on your own profile" });
   }
 
   // Check the skill first so a missing skill always returns 404.
@@ -380,13 +483,15 @@ app.put("/api/skills/:id", (req, res) => {
 });
 
 // Delete one skill by ID.
-app.delete("/api/skills/:id", (req, res) => {
+app.delete("/api/skills/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const skillId = getStudentId(req.params.id);
   if (!skillId) {
     return res.status(400).json({ success: false, message: "Invalid skill ID" });
   }
 
-  pool.query("DELETE FROM skills WHERE skill_id = ?", [skillId], (error, result) => {
+  pool.query("DELETE FROM skills WHERE skill_id = ? AND student_id = ?", [skillId, authenticatedStudent.student_id], (error, result) => {
     if (error) return handleDatabaseError(error, res);
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Skill not found" });
@@ -421,10 +526,15 @@ function getValidatedExchangeData(body) {
 }
 
 // Add a new request between two existing students.
-app.post("/api/exchanges", (req, res) => {
+app.post("/api/exchanges", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const exchange = getValidatedExchangeData(req.body);
   if (exchange.error) {
     return res.status(400).json({ success: false, message: exchange.error });
+  }
+  if (authenticatedStudent.student_id !== exchange.senderId) {
+    return res.status(403).json({ success: false, message: "You can only send exchange requests from your own profile" });
   }
 
   verifyStudentExists(exchange.senderId, res, (sender) => {
@@ -551,7 +661,9 @@ function completeExchangeRequest(requestId, res) {
 }
 
 // Update all fields of one exchange request.
-app.put("/api/exchanges/:id", (req, res) => {
+app.put("/api/exchanges/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const requestId = getStudentId(req.params.id);
   const exchange = getValidatedExchangeData(req.body);
 
@@ -570,6 +682,26 @@ app.put("/api/exchanges/:id", (req, res) => {
     }
 
     const previousRequest = requests[0];
+    const isSender = authenticatedStudent.student_id === previousRequest.sender_id;
+    const isReceiver = authenticatedStudent.student_id === previousRequest.receiver_id;
+    if (!isSender && !isReceiver) {
+      return res.status(403).json({ success: false, message: "You are not part of this exchange request" });
+    }
+    if (exchange.senderId !== previousRequest.sender_id || exchange.receiverId !== previousRequest.receiver_id) {
+      return res.status(400).json({ success: false, message: "Exchange participants cannot be changed" });
+    }
+    if (previousRequest.status === "PENDING" && !isReceiver && exchange.status !== "PENDING") {
+      return res.status(403).json({ success: false, message: "Only the receiving student can accept or reject this request" });
+    }
+    if (previousRequest.status === "ACCEPTED" && exchange.status === "COMPLETED" && !isSender && !isReceiver) {
+      return res.status(403).json({ success: false, message: "Only exchange participants can complete this request" });
+    }
+    if (previousRequest.status !== exchange.status && !(
+      (previousRequest.status === "PENDING" && ["ACCEPTED", "REJECTED"].includes(exchange.status)) ||
+      (previousRequest.status === "ACCEPTED" && exchange.status === "COMPLETED")
+    )) {
+      return res.status(400).json({ success: false, message: "This exchange status change is not allowed" });
+    }
     verifyStudentExists(exchange.senderId, res, () => {
       verifyStudentExists(exchange.receiverId, res, (receiver) => {
         // Completed exchanges are no longer active: remove this request and only its notifications.
@@ -618,13 +750,15 @@ app.put("/api/exchanges/:id", (req, res) => {
 });
 
 // Delete one exchange request by ID.
-app.delete("/api/exchanges/:id", (req, res) => {
+app.delete("/api/exchanges/:id", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const requestId = getStudentId(req.params.id);
   if (!requestId) {
     return res.status(400).json({ success: false, message: "Invalid exchange request ID" });
   }
 
-  pool.query("DELETE FROM exchange_requests WHERE request_id = ?", [requestId], (error, result) => {
+  pool.query("DELETE FROM exchange_requests WHERE request_id = ? AND sender_id = ?", [requestId, authenticatedStudent.student_id], (error, result) => {
     if (error) return handleDatabaseError(error, res);
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Exchange request not found" });
@@ -635,10 +769,15 @@ app.delete("/api/exchanges/:id", (req, res) => {
 });
 
 // Get the unread notification count for one selected student profile.
-app.get("/api/notifications/:studentId/unread-count", (req, res) => {
+app.get("/api/notifications/:studentId/unread-count", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const studentId = getStudentId(req.params.studentId);
   if (!studentId) {
     return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only view your own notifications" });
   }
 
   pool.query("SELECT COUNT(*) AS unread_count FROM notifications WHERE student_id = ? AND is_read = 0", [studentId], (error, rows) => {
@@ -648,10 +787,15 @@ app.get("/api/notifications/:studentId/unread-count", (req, res) => {
 });
 
 // Get newest notifications first for the currently selected student profile.
-app.get("/api/notifications/:studentId", (req, res) => {
+app.get("/api/notifications/:studentId", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const studentId = getStudentId(req.params.studentId);
   if (!studentId) {
     return res.status(400).json({ success: false, message: "Invalid student ID" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only view your own notifications" });
   }
 
   const sql = `SELECT notification_id, student_id, type, message, related_request_id, is_read, created_at
@@ -665,11 +809,16 @@ app.get("/api/notifications/:studentId", (req, res) => {
 });
 
 // Mark one notification as read only when it belongs to the supplied student profile.
-app.patch("/api/notifications/:notificationId/read", (req, res) => {
+app.patch("/api/notifications/:notificationId/read", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const notificationId = getStudentId(req.params.notificationId);
   const studentId = getStudentId(req.body.student_id);
   if (!notificationId || !studentId) {
     return res.status(400).json({ success: false, message: "A valid notification ID and student ID are required" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only update your own notifications" });
   }
 
   const sql = "UPDATE notifications SET is_read = 1 WHERE notification_id = ? AND student_id = ?";
@@ -684,11 +833,16 @@ app.patch("/api/notifications/:notificationId/read", (req, res) => {
 });
 
 // Mark all notifications as read for one selected student profile.
-app.patch("/api/notifications/:studentId/read-all", (req, res) => {
+app.patch("/api/notifications/:studentId/read-all", async (req, res) => {
+  const authenticatedStudent = await requireAuthenticatedStudent(req, res);
+  if (!authenticatedStudent) return;
   const studentId = getStudentId(req.params.studentId);
   const bodyStudentId = getStudentId(req.body.student_id);
   if (!studentId || studentId !== bodyStudentId) {
     return res.status(400).json({ success: false, message: "Student ID does not match the selected profile" });
+  }
+  if (authenticatedStudent.student_id !== studentId) {
+    return res.status(403).json({ success: false, message: "You can only update your own notifications" });
   }
 
   pool.query("UPDATE notifications SET is_read = 1 WHERE student_id = ? AND is_read = 0", [studentId], (error) => {

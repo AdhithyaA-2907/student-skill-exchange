@@ -101,26 +101,29 @@ setupInteractions();
 // ---------- Live API setup ----------
 // fetch() requests JSON from the existing Express backend. No mock data is used below.
 const API = "https://student-skill-exchange-api.onrender.com/api";
-// This key stores only the selected student's numeric ID, never credentials.
-const ACTIVE_PROFILE_KEY = "studentSkillExchange.activeStudentId";
-function getStoredActiveId() {
-  const studentId = Number(localStorage.getItem(ACTIVE_PROFILE_KEY));
-  return Number.isInteger(studentId) && studentId > 0 ? studentId : null;
-}
-function saveActiveProfile(studentId) { localStorage.setItem(ACTIVE_PROFILE_KEY, String(studentId)); }
-function clearStoredActiveProfile() { localStorage.removeItem(ACTIVE_PROFILE_KEY); }
+// Only an opaque server-issued session token is persisted. A student ID alone is never trusted as a login.
+const SESSION_TOKEN_KEY = "studentSkillExchange.sessionToken";
+function getStoredSessionToken() { return localStorage.getItem(SESSION_TOKEN_KEY) || ""; }
+function saveSessionToken(token) { localStorage.setItem(SESSION_TOKEN_KEY, token); }
+function clearStoredSessionToken() { localStorage.removeItem(SESSION_TOKEN_KEY); }
 
-// Restore the non-sensitive profile ID on each route load. It is validated after students load.
-const state = { students: [], skills: [], exchanges: [], notifications: [], unreadNotifications: 0, activeId: getStoredActiveId() };
+// The application has three explicit authentication states: loading, authenticated, unauthenticated.
+const state = { students: [], skills: [], exchanges: [], notifications: [], unreadNotifications: 0, activeId: null, sessionToken: getStoredSessionToken(), authState: "LOADING" };
 
 async function request(path, options = {}) {
   try {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (state.sessionToken) headers.Authorization = `Bearer ${state.sessionToken}`;
     const response = await fetch(`${API}${path}`, {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+      headers
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || "The request could not be completed.");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.message || "The request could not be completed.");
+      error.status = response.status;
+      throw error;
+    }
     return data;
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("The API returned an invalid response.");
@@ -139,6 +142,55 @@ const empty = (message) => `<div class="empty-state">${safe(message)}</div>`;
 let toastTimer;
 function toast(message) { const element = byId("#toast"); element.textContent = message; element.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => element.classList.remove("show"), 3000); }
 function formError(name, message = "") { byId(`#${name}-form-error`).textContent = message; }
+
+// ---------- Session initialization ----------
+// The page stays behind this gate until the server has verified the saved token.
+function showAuthGate(status, message) {
+  state.authState = status;
+  document.body.classList.remove("auth-loading", "auth-authenticated", "auth-unauthenticated", "auth-error");
+  document.body.classList.add(`auth-${status.toLowerCase()}`);
+  const gate = byId("#auth-gate");
+  const title = byId("#auth-gate-title");
+  const detail = byId("#auth-gate-message");
+  byId("#auth-login-button").hidden = status !== "UNAUTHENTICATED";
+  byId("#auth-create-button").hidden = status !== "UNAUTHENTICATED";
+  byId("#auth-retry-button").hidden = status !== "ERROR";
+  if (status === "AUTHENTICATED") { gate.hidden = true; return; }
+  gate.hidden = false;
+  title.textContent = status === "LOADING" ? "Checking your session…" : status === "ERROR" ? "Unable to reach SkillSwap" : "Welcome to SkillSwap";
+  detail.textContent = message || (status === "LOADING" ? "Please wait while we securely load your profile." : "Sign in to manage your skills and exchange requests.");
+}
+
+function setButtonBusy(button, isBusy, busyText) {
+  if (!button.dataset.label) button.dataset.label = button.textContent;
+  button.disabled = isBusy;
+  button.textContent = isBusy ? busyText : button.dataset.label;
+}
+
+async function initializeSession() {
+  showAuthGate("LOADING");
+  if (!state.sessionToken) {
+    showAuthGate("UNAUTHENTICATED");
+    return;
+  }
+
+  try {
+    const result = await request("/auth/session");
+    state.activeId = result.student.student_id;
+    showAuthGate("AUTHENTICATED");
+    await refreshAll();
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      clearStoredSessionToken();
+      state.sessionToken = "";
+      state.activeId = null;
+      showAuthGate("UNAUTHENTICATED", "Your session has ended. Please sign in again.");
+      return;
+    }
+    // Network and server faults remain an error state; they never masquerade as logout.
+    showAuthGate("ERROR", "We could not verify your session. Check your connection and try again.");
+  }
+}
 
 // ---------- Real notification rendering ----------
 // Notifications are read from the backend table and never created in the browser.
@@ -239,6 +291,10 @@ function renderSkills() {
 function renderPartners() {
   const student = currentStudent();
   const normalizeSkill = (name) => String(name || "").trim().toLowerCase();
+  const search = byId("#discover-search").value.trim().toLowerCase();
+  const department = byId("#discover-department").value;
+  const year = byId("#discover-year").value;
+  const proficiency = byId("#discover-proficiency").value;
 
   if (!state.students.length) { byId("#partners-list").innerHTML = empty("Create a student profile to discover partners."); return; }
   if (!student) { byId("#partners-list").innerHTML = empty("Choose a profile to discover partners."); return; }
@@ -269,19 +325,49 @@ function renderPartners() {
     }
   });
 
-  if (!recommended.length) { byId("#partners-list").innerHTML = empty("No matching skill partners yet."); return; }
-  byId("#partners-list").innerHTML = recommended.map(({ partner, matchingSkills }, index) => {
+  const filtered = recommended.filter(({ partner, matchingSkills }) => {
+    const searchableSkills = state.skills.filter((skill) => skill.student_id === partner.student_id);
+    const matchesSearch = !search || partner.name.toLowerCase().includes(search) || searchableSkills.some((skill) => normalizeSkill(skill.skill_name).includes(search));
+    const matchesDepartment = !department || partner.department === department;
+    const matchesYear = !year || String(partner.year || "") === year;
+    const matchesProficiency = !proficiency || matchingSkills.some((skill) => skill.proficiency === proficiency);
+    return matchesSearch && matchesDepartment && matchesYear && matchesProficiency;
+  });
+
+  if (!filtered.length) { byId("#partners-list").innerHTML = empty(search || department || year || proficiency ? "No matching partners found. Try clearing a filter." : "No matching skill partners yet."); return; }
+  byId("#partners-list").innerHTML = filtered.map(({ partner, matchingSkills }, index) => {
     // Only show the teaching skills that exactly match this student's learning goals.
     const displayedSkills = [...new Map(matchingSkills.map((skill) => [normalizeSkill(skill.skill_name), skill])).values()];
-    return `<article class="partner-card"><div class="partner-header"><span class="avatar ${avatarTone(index)}">${initialsFor(partner.name)}</span><div><div class="partner-name">${safe(partner.name)}</div><div class="partner-course">${safe(partner.department || "Student")}${partner.year ? ` · Year ${partner.year}` : ""}</div></div><span class="match-pill">Skill match</span></div><p>Teaches the skill${displayedSkills.length === 1 ? "" : "s"} you want to learn.</p><div class="partner-skills">${displayedSkills.map((skill) => `<span>${safe(skill.skill_name)}</span>`).join("")}</div><div class="partner-footer"><small>● Open to connect</small><button class="connect-button" type="button" data-connect="${partner.student_id}">Connect</button></div></article>`;
+    const teaches = state.skills.filter((skill) => skill.student_id === partner.student_id && skill.skill_type === "TEACH");
+    const learns = state.skills.filter((skill) => skill.student_id === partner.student_id && skill.skill_type === "LEARN");
+    const completedCount = state.exchanges.filter((exchange) => (exchange.sender_id === partner.student_id || exchange.receiver_id === partner.student_id) && exchange.status === "COMPLETED").length;
+    return `<article class="partner-card"><div class="partner-header"><span class="avatar ${avatarTone(index)}">${initialsFor(partner.name)}</span><div><div class="partner-name">${safe(partner.name)}</div><div class="partner-course">${safe(partner.department || "Student")}${partner.year ? ` · Year ${partner.year}` : ""}</div></div><span class="match-pill">${displayedSkills.length > 1 ? "Strong match" : "Skill match"}</span></div><p>Teaches the skill${displayedSkills.length === 1 ? "" : "s"} you want to learn.</p><div class="partner-skills">${displayedSkills.map((skill) => `<span>${safe(skill.skill_name)}${skill.proficiency ? ` · ${safe(skill.proficiency)}` : ""}</span>`).join("")}</div><div class="partner-details">Teaches ${teaches.length} · Wants to learn ${learns.length} · Completed ${completedCount}</div><div class="partner-footer"><small>● Open to connect</small><button class="connect-button" type="button" data-connect="${partner.student_id}">Connect</button></div></article>`;
   }).join("");
+}
+
+function populateDiscoverFilters() {
+  const selectOptions = (values, placeholder) => `<option value="">${placeholder}</option>${values.map((value) => `<option value="${safe(value)}">${safe(value)}</option>`).join("")}`;
+  const departments = [...new Set(state.students.map((student) => student.department).filter(Boolean))].sort();
+  const years = [...new Set(state.students.map((student) => student.year).filter(Boolean))].sort((a, b) => a - b);
+  const levels = [...new Set(state.skills.map((skill) => skill.proficiency).filter(Boolean))].sort();
+  const current = { department: byId("#discover-department").value, year: byId("#discover-year").value, proficiency: byId("#discover-proficiency").value };
+  byId("#discover-department").innerHTML = selectOptions(departments, "All departments");
+  byId("#discover-year").innerHTML = selectOptions(years, "All years");
+  byId("#discover-proficiency").innerHTML = selectOptions(levels, "All proficiency levels");
+  byId("#discover-department").value = current.department;
+  byId("#discover-year").value = current.year;
+  byId("#discover-proficiency").value = current.proficiency;
 }
 
 // ---------- Render and manage live Exchange Request API data ----------
 function renderExchanges() {
   const student = currentStudent();
   const exchanges = student ? state.exchanges.filter((item) => item.sender_id === student.student_id || item.receiver_id === student.student_id) : [];
-  byId("#request-count").textContent = exchanges.length;
+  const pending = exchanges.filter((item) => item.status === "PENDING");
+  const accepted = exchanges.filter((item) => item.status === "ACCEPTED");
+  byId("#pending-count").textContent = pending.length;
+  byId("#accepted-count").textContent = accepted.length;
+  byId("#pending-caption").textContent = pending.length ? "Awaiting a reply" : "All caught up";
   if (!student) { byId("#requests-list").innerHTML = empty("Choose a profile to view requests."); updateHero(); return; }
   if (!exchanges.length) { byId("#requests-list").innerHTML = empty("No exchanges yet. Connect with a partner to send your first request."); updateHero(); return; }
   byId("#requests-list").innerHTML = exchanges.map((item, index) => {
@@ -315,15 +401,16 @@ function renderOverview() {
 // ---------- GET API calls and dashboard refresh ----------
 async function loadStudents() {
   const data = await request("/students"); state.students = data.students || [];
-  // A restored profile is valid only while its student record still exists.
+  // A verified session is invalid only if its corresponding student was removed.
   if (!state.students.some((item) => item.student_id === state.activeId)) {
     state.activeId = null;
-    clearStoredActiveProfile();
+    clearStoredSessionToken();
+    state.sessionToken = "";
   }
   renderProfile();
   loadNotifications();
 }
-async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; renderSkills(); renderPartners(); renderOverview(); }
+async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; populateDiscoverFilters(); renderSkills(); renderPartners(); renderOverview(); }
 async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); renderOverview(); }
 async function refreshAll() {
   ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = '<div class="loading-state">Loading dashboard…</div>'; });
@@ -344,11 +431,13 @@ function openExchange(receiver = "") {
 }
 async function createStudent(event) {
   event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("student"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password"), name: data.get("name").trim(), email: data.get("email").trim(), department: data.get("department").trim() || null, year: data.get("year") ? Number(data.get("year")) : null };
-  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; saveActiveProfile(state.activeId); form.reset(); byId("#student-modal").close(); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); }
+  const button = form.querySelector("[type=submit]"); setButtonBusy(button, true, "Creating profile...");
+  try { const result = await request("/students", { method: "POST", body: JSON.stringify(body) }); state.sessionToken = result.session_token; saveSessionToken(result.session_token); state.activeId = result.student.student_id; form.reset(); byId("#student-modal").close(); showAuthGate("AUTHENTICATED"); toast("Student profile created."); await refreshAll(); } catch (error) { formError("student", error.message); } finally { setButtonBusy(button, false); }
 }
 async function login(event) {
   event.preventDefault(); const form = event.currentTarget; if (!form) return; formError("login"); const data = new FormData(form); const body = { user_id: data.get("user_id").trim(), password: data.get("password") };
-  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.activeId = result.student.student_id; saveActiveProfile(state.activeId); form.reset(); byId("#login-modal").close(); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); }
+  const button = form.querySelector("[type=submit]"); setButtonBusy(button, true, "Signing in...");
+  try { const result = await request("/auth/login", { method: "POST", body: JSON.stringify(body) }); state.sessionToken = result.session_token; saveSessionToken(result.session_token); state.activeId = result.student.student_id; form.reset(); byId("#login-modal").close(); showAuthGate("AUTHENTICATED"); toast(`Logged in as ${result.student.name}.`); await refreshAll(); } catch (error) { formError("login", error.message); } finally { setButtonBusy(button, false); }
 }
 async function saveSkill(event) {
   event.preventDefault(); formError("skill"); const id = byId("#skill-id").value; const body = { student_id: Number(byId("#skill-student-id").value), skill_name: byId("#skill-name").value.trim(), skill_type: byId("#skill-type").value, proficiency: byId("#skill-proficiency").value.trim() || null };
@@ -363,8 +452,13 @@ async function removeSkill(id) { if (!confirm("Delete this skill?")) return; try
 async function updateExchange(id) { const item = state.exchanges.find((exchange) => exchange.request_id === id); const status = byId(`[data-status-for="${id}"]`).value; try { await request(`/exchanges/${id}`, { method: "PUT", body: JSON.stringify({ sender_id: item.sender_id, receiver_id: item.receiver_id, offered_skill: item.offered_skill, requested_skill: item.requested_skill, status }) }); toast(status === "COMPLETED" ? "Exchange completed and removed." : "Exchange status updated."); await Promise.all([loadExchanges(), loadNotifications()]); } catch (error) { toast(error.message); } }
 async function removeExchange(id) { if (!confirm("Delete this exchange request?")) return; try { await request(`/exchanges/${id}`, { method: "DELETE" }); toast("Exchange request deleted."); await loadExchanges(); await loadNotifications(); } catch (error) { toast(error.message); } }
 
-function logout() {
-  clearStoredActiveProfile();
+async function logout() {
+  const button = byId("#logout-button");
+  setButtonBusy(button, true, "Signing out...");
+  try { await request("/auth/logout", { method: "POST" }); } catch (error) { toast("Signed out locally. The server could not be reached."); }
+  finally {
+  clearStoredSessionToken();
+  state.sessionToken = "";
   state.activeId = null;
   state.notifications = [];
   state.unreadNotifications = 0;
@@ -376,7 +470,10 @@ function logout() {
   renderExchanges();
   renderOverview();
   renderNotifications();
+  showAuthGate("UNAUTHENTICATED");
+  setButtonBusy(button, false);
   toast("Logged out. Log in again to access a profile.");
+  }
 }
 
 // ---------- Route setup ----------
@@ -406,6 +503,13 @@ document.querySelectorAll("[data-toggle-password]").forEach((button) => button.a
 }));
 byId("#add-skill-button").addEventListener("click", () => openSkill());
 byId("#logout-button").addEventListener("click", logout);
+byId("#auth-login-button").addEventListener("click", () => { formError("login"); byId("#login-modal").showModal(); });
+byId("#auth-create-button").addEventListener("click", () => { formError("student"); byId("#student-modal").showModal(); });
+byId("#auth-retry-button").addEventListener("click", initializeSession);
+// Discover filters operate on already-fetched data, avoiding extra API calls while typing.
+["#discover-search", "#discover-department", "#discover-year", "#discover-proficiency"].forEach((selector) => {
+  byId(selector).addEventListener(selector === "#discover-search" ? "input" : "change", renderPartners);
+});
 byId("#active-student-select").addEventListener("change", () => { byId("#active-student-select").value = state.activeId || ""; formError("login"); byId("#login-modal").showModal(); });
 byId("#student-form").addEventListener("submit", createStudent); byId("#login-form").addEventListener("submit", login); byId("#skill-form").addEventListener("submit", saveSkill); byId("#exchange-form").addEventListener("submit", createExchange);
 document.addEventListener("click", (event) => { const edit = event.target.dataset.editSkill; const skillDelete = event.target.dataset.deleteSkill; const connect = event.target.dataset.connect; const exchangeUpdate = event.target.dataset.updateExchange; const exchangeDelete = event.target.dataset.deleteExchange; if (edit) openSkill(state.skills.find((skill) => skill.skill_id === Number(edit))); if (skillDelete) removeSkill(Number(skillDelete)); if (connect) openExchange(Number(connect)); if (exchangeUpdate) updateExchange(Number(exchangeUpdate)); if (exchangeDelete) removeExchange(Number(exchangeDelete)); });
@@ -431,6 +535,6 @@ document.addEventListener("click", (event) => {
   }
 });
 configureRoute();
-refreshAll();
+initializeSession();
 // Poll lightly for notifications to provide a real-time feel without WebSockets.
 setInterval(loadNotifications, 45000);
