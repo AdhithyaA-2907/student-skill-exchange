@@ -122,12 +122,28 @@ async function request(path, options = {}) {
     if (!response.ok) {
       const error = new Error(data.message || "The request could not be completed.");
       error.status = response.status;
+      error.endpoint = path;
+      error.responseBody = data;
+      console.error("SkillSwap API request failed", { endpoint: path, status: response.status, response: data });
       throw error;
     }
     return data;
   } catch (error) {
-    if (error instanceof SyntaxError) throw new Error("The API returned an invalid response.");
-    if (error.message === "Failed to fetch") throw new Error("Cannot reach the backend. Start it on port 5000.");
+    if (error.endpoint) throw error;
+    if (error instanceof SyntaxError) {
+      const responseError = new Error("The API returned an invalid response.");
+      responseError.endpoint = path;
+      console.error("SkillSwap API returned invalid JSON", { endpoint: path, error });
+      throw responseError;
+    }
+    if (error.message === "Failed to fetch") {
+      const networkError = new Error("Unable to connect to the server. Please try again.");
+      networkError.endpoint = path;
+      networkError.isNetworkError = true;
+      console.error("SkillSwap network request failed", { endpoint: path, error });
+      throw networkError;
+    }
+    console.error("Unexpected SkillSwap API error", { endpoint: path, error });
     throw error;
   }
 }
@@ -180,6 +196,7 @@ async function initializeSession() {
     showAuthGate("AUTHENTICATED");
     await refreshAll();
   } catch (error) {
+    console.error("SkillSwap session verification failed", { endpoint: error.endpoint, status: error.status, response: error.responseBody, error });
     if (error.status === 401 || error.status === 403) {
       clearStoredSessionToken();
       state.sessionToken = "";
@@ -187,8 +204,15 @@ async function initializeSession() {
       showAuthGate("UNAUTHENTICATED", "Your session has ended. Please sign in again.");
       return;
     }
-    // Network and server faults remain an error state; they never masquerade as logout.
-    showAuthGate("ERROR", "We could not verify your session. Check your connection and try again.");
+    // Keep server, endpoint, and true network failures distinct for the user and console.
+    const message = error.status === 404
+      ? "The session API endpoint was not found. Please try again after deployment completes."
+      : error.status >= 500
+        ? "The server could not verify your session. Please try again."
+        : error.isNetworkError
+          ? "Unable to connect to the server. Please check your connection and try again."
+          : "Unable to verify your session. Please try again.";
+    showAuthGate("ERROR", message);
   }
 }
 
@@ -408,14 +432,46 @@ async function loadStudents() {
     state.sessionToken = "";
   }
   renderProfile();
-  loadNotifications();
 }
 async function loadSkills() { const data = await request("/skills"); state.skills = data.skills || []; populateDiscoverFilters(); renderSkills(); renderPartners(); renderOverview(); }
 async function loadExchanges() { const data = await request("/exchanges"); state.exchanges = data.exchanges || []; renderExchanges(); renderOverview(); }
+
+function dashboardErrorMessage(error) {
+  if (error.status === 401 || error.status === 403) return "Your session has expired. Please sign in again.";
+  if (error.status === 404) return `The API endpoint ${error.endpoint || ""} was not found. Please try again after deployment completes.`;
+  if (error.status >= 500) return "Unable to load your dashboard because the server reported an error. Please try again.";
+  if (error.status === 400) return error.message || "The dashboard request was invalid.";
+  if (error.isNetworkError) return "Unable to connect to the server. Please check your connection and try again.";
+  return "Unable to load your dashboard. Please try again.";
+}
+
+function renderDashboardLoadError(message) {
+  ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => {
+    byId(selector).innerHTML = `<div class="error-state">${safe(message)}</div>`;
+  });
+}
+
 async function refreshAll() {
   ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = '<div class="loading-state">Loading dashboard…</div>'; });
-  try { await loadStudents(); await Promise.all([loadSkills(), loadExchanges()]); }
-  catch (error) { ["#teach-skills", "#learn-skills", "#partners-list", "#requests-list"].forEach((selector) => { byId(selector).innerHTML = `<div class="error-state">${safe(error.message)}</div>`; }); toast(error.message); }
+  try {
+    // Students determine the active profile. Once loaded, all other reads are independent.
+    await loadStudents();
+    const results = await Promise.allSettled([loadSkills(), loadExchanges(), loadNotifications()]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+  } catch (error) {
+    const message = dashboardErrorMessage(error);
+    console.error("SkillSwap dashboard initialization failed", { endpoint: error.endpoint, status: error.status, response: error.responseBody, error });
+    if (error.status === 401 || error.status === 403) {
+      clearStoredSessionToken();
+      state.sessionToken = "";
+      state.activeId = null;
+      showAuthGate("UNAUTHENTICATED", message);
+      return;
+    }
+    renderDashboardLoadError(message);
+    toast(message);
+  }
 }
 
 // ---------- Create and update forms ----------

@@ -11,6 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const scryptAsync = promisify(scrypt);
 const publicStudentFields = "student_id, user_id, name, email, department, year";
+// Qualify fields when students is joined with auth_sessions to avoid ambiguous column names.
+const sessionStudentFields = "students.student_id, students.user_id, students.name, students.email, students.department, students.year";
 const SESSION_DURATION_DAYS = 7;
 
 // Allow requests from the frontend and accept JSON request bodies.
@@ -117,7 +119,7 @@ async function requireAuthenticatedStudent(req, res) {
 
   try {
     const [rows] = await pool.promise().query(
-      `SELECT ${publicStudentFields}
+      `SELECT ${sessionStudentFields}
        FROM auth_sessions
        JOIN students ON auth_sessions.student_id = students.student_id
        WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > NOW()`,
