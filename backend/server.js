@@ -4,20 +4,28 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
+const bcrypt = require("bcryptjs");
 const { createHash, randomBytes, scrypt, timingSafeEqual } = require("crypto");
 const { promisify } = require("util");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+// Compose assigns this non-sensitive label so DA3 can show which container served a request.
+const BACKEND_INSTANCE = process.env.BACKEND_INSTANCE || "local";
 const scryptAsync = promisify(scrypt);
-const publicStudentFields = "student_id, user_id, name, email, department, year";
+const publicStudentFields = "student_id, user_id, name, email, department, year, role";
 // Qualify fields when students is joined with auth_sessions to avoid ambiguous column names.
-const sessionStudentFields = "students.student_id, students.user_id, students.name, students.email, students.department, students.year";
+const sessionStudentFields = "students.student_id, students.user_id, students.name, students.email, students.department, students.year, students.role";
 const SESSION_DURATION_DAYS = 7;
+const BCRYPT_SALT_ROUNDS = 12;
 
 // Allow requests from the frontend and accept JSON request bodies.
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader("X-Backend-Instance", BACKEND_INSTANCE);
+  next();
+});
 
 // Create a reusable pool for the Railway MySQL database.
 const pool = mysql.createPool({
@@ -73,20 +81,33 @@ function handleDatabaseError(error, res) {
   });
 }
 
-// Passwords are stored as salted scrypt hashes, never as plain text.
+// New passwords use bcrypt's built-in random salt. Plain-text passwords are never stored.
 async function hashPassword(password) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = await scryptAsync(password, salt, 64);
-  return `scrypt$${salt}$${hash.toString("hex")}`;
+  return bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 }
 
-async function passwordMatches(password, storedHash) {
+function isBcryptHash(value) {
+  return /^\$2[aby]\$\d{2}\$/.test(String(value || ""));
+}
+
+function isLegacyScryptHash(value) {
+  return String(value || "").startsWith("scrypt$");
+}
+
+// Existing accounts used scrypt. Verify them safely until their owner logs in once.
+async function legacyScryptPasswordMatches(password, storedHash) {
   const [algorithm, salt, hash] = String(storedHash || "").split("$");
   if (algorithm !== "scrypt" || !salt || !hash) return false;
 
   const expected = Buffer.from(hash, "hex");
   const actual = await scryptAsync(password, salt, expected.length);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+async function passwordMatches(password, storedHash) {
+  if (isBcryptHash(storedHash)) return bcrypt.compare(password, storedHash);
+  if (isLegacyScryptHash(storedHash)) return legacyScryptPasswordMatches(password, storedHash);
+  return false;
 }
 
 // Tokens are random, but only their SHA-256 hashes are stored in MySQL.
@@ -137,6 +158,17 @@ async function requireAuthenticatedStudent(req, res) {
   }
 }
 
+// Every /api/admin endpoint uses this server-side check; UI visibility is not trusted.
+async function requireAdmin(req, res) {
+  const student = await requireAuthenticatedStudent(req, res);
+  if (!student) return null;
+  if (student.role !== "admin") {
+    res.status(403).json({ success: false, message: "Administrator access is required" });
+    return null;
+  }
+  return student;
+}
+
 // Create a new student.
 app.post("/api/students", async (req, res) => {
   const { user_id, password, name, email, department, year } = req.body;
@@ -172,7 +204,8 @@ app.post("/api/students", async (req, res) => {
           name,
           email,
           department: department || null,
-          year: year || null
+          year: year || null,
+          role: "student"
         }
       });
     } catch (sessionError) {
@@ -208,8 +241,9 @@ app.get("/api/students/:id", (req, res) => {
   });
 });
 
-// Verify credentials on the server before the frontend changes profiles.
-app.post("/api/auth/login", (req, res) => {
+// Reuses the existing password/session flow for both student and administrator sign-in.
+function createLoginHandler(adminOnly = false) {
+  return (req, res) => {
   const userId = String(req.body.user_id || "").trim();
   const password = req.body.password;
   if (!userId || !password) {
@@ -223,6 +257,18 @@ app.post("/api/auth/login", (req, res) => {
     try {
       if (!student || !(await passwordMatches(password, student.password_hash))) {
         return res.status(401).json({ success: false, message: "Invalid User ID or password." });
+      }
+      if (adminOnly && student.role !== "admin") {
+        return res.status(403).json({ success: false, message: "Administrator access is required" });
+      }
+
+      // Upgrade a verified legacy account one at a time; never overwrite unknown values.
+      if (isLegacyScryptHash(student.password_hash)) {
+        const bcryptHash = await hashPassword(password);
+        await pool.promise().query(
+          "UPDATE students SET password_hash = ? WHERE student_id = ? AND password_hash = ?",
+          [bcryptHash, student.student_id, student.password_hash]
+        );
       }
     } catch (verificationError) {
       console.error("Password verification failed:", verificationError.message);
@@ -238,7 +284,13 @@ app.post("/api/auth/login", (req, res) => {
       return res.status(500).json({ success: false, message: "Unable to start a session" });
     }
   });
-});
+  };
+}
+
+// Student sign-in accepts any authenticated account.
+app.post("/api/auth/login", createLoginHandler());
+// Separate entry point for the Admin/Supervisor application.
+app.post("/api/admin/login", createLoginHandler(true));
 
 // Verify a saved token before the frontend displays an authenticated dashboard.
 app.get("/api/auth/session", async (req, res) => {
@@ -258,6 +310,243 @@ app.post("/api/auth/logout", async (req, res) => {
   } catch (error) {
     console.error("Logout failed:", error.message);
     res.status(500).json({ success: false, message: "Unable to end the server session" });
+  }
+});
+
+// ---------- Protected administrator APIs ----------
+// These endpoints intentionally select only non-sensitive account fields.
+app.get("/api/admin/dashboard", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const [[students], [skills], [exchanges], [pending], [notifications], [activeUsers]] = await Promise.all([
+      pool.promise().query("SELECT COUNT(*) AS total FROM students"),
+      pool.promise().query("SELECT COUNT(*) AS total FROM skills"),
+      pool.promise().query("SELECT COUNT(*) AS total FROM exchange_requests"),
+      pool.promise().query("SELECT COUNT(*) AS total FROM exchange_requests WHERE status = 'PENDING'"),
+      pool.promise().query("SELECT COUNT(*) AS total FROM notifications"),
+      pool.promise().query("SELECT COUNT(DISTINCT student_id) AS total FROM auth_sessions WHERE expires_at > NOW()")
+    ]);
+    res.status(200).json({
+      success: true,
+      dashboard: {
+        total_students: students[0].total,
+        total_skills: skills[0].total,
+        total_exchanges: exchanges[0].total,
+        pending_exchanges: pending[0].total,
+        total_notifications: notifications[0].total,
+        active_users: activeUsers[0].total
+      }
+    });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/students", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const search = String(req.query.search || "").trim();
+  const sortColumns = { id: "student_id", user_id: "user_id", name: "name", email: "email", department: "department", year: "year", role: "role" };
+  const sort = sortColumns[req.query.sort] || "student_id";
+  const direction = String(req.query.order || "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
+  try {
+    const [students] = await pool.promise().query(
+      `SELECT ${publicStudentFields} FROM students
+       WHERE user_id LIKE ? OR name LIKE ? OR email LIKE ? OR department LIKE ?
+       ORDER BY ${sort} ${direction}`,
+      Array(4).fill(`%${search}%`)
+    );
+    res.status(200).json({ success: true, students });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/students/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const studentId = getStudentId(req.params.id);
+  if (!studentId) return res.status(400).json({ success: false, message: "Invalid student ID" });
+  try {
+    const [[students], [skills], [exchanges]] = await Promise.all([
+      pool.promise().query(`SELECT ${publicStudentFields} FROM students WHERE student_id = ?`, [studentId]),
+      pool.promise().query("SELECT skill_id, skill_name, skill_type, proficiency FROM skills WHERE student_id = ? ORDER BY skill_id DESC", [studentId]),
+      pool.promise().query(`SELECT exchange_requests.*, sender.name AS sender_name, receiver.name AS receiver_name
+        FROM exchange_requests JOIN students AS sender ON sender.student_id = exchange_requests.sender_id
+        JOIN students AS receiver ON receiver.student_id = exchange_requests.receiver_id
+        WHERE sender_id = ? OR receiver_id = ? ORDER BY request_id DESC`, [studentId, studentId])
+    ]);
+    if (!students.length) return res.status(404).json({ success: false, message: "Student not found" });
+    res.status(200).json({ success: true, student: students[0], skills, exchanges });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.put("/api/admin/students/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const studentId = getStudentId(req.params.id);
+  const { name, email, department, year, role } = req.body;
+  if (!studentId || !name || !email || !["student", "admin"].includes(role)) {
+    return res.status(400).json({ success: false, message: "Name, email, role, and a valid student ID are required" });
+  }
+  if (studentId === admin.student_id && role !== "admin") {
+    return res.status(400).json({ success: false, message: "Administrators cannot remove their own administrator role" });
+  }
+  try {
+    const [result] = await pool.promise().query(
+      "UPDATE students SET name = ?, email = ?, department = ?, year = ?, role = ? WHERE student_id = ?",
+      [String(name).trim(), String(email).trim(), department || null, year || null, role, studentId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Student not found" });
+    const [students] = await pool.promise().query(`SELECT ${publicStudentFields} FROM students WHERE student_id = ?`, [studentId]);
+    res.status(200).json({ success: true, student: students[0] });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.delete("/api/admin/students/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const studentId = getStudentId(req.params.id);
+  if (!studentId || getStudentId(req.body.confirm_student_id) !== studentId) {
+    return res.status(400).json({ success: false, message: "Confirm the exact student ID before deleting" });
+  }
+  if (studentId === admin.student_id) return res.status(400).json({ success: false, message: "Administrators cannot delete their own account" });
+  try {
+    const [result] = await pool.promise().query("DELETE FROM students WHERE student_id = ?", [studentId]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Student not found" });
+    res.status(200).json({ success: true, message: "Student deleted" });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/skills", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const search = `%${String(req.query.search || "").trim()}%`;
+  try {
+    const [skills] = await pool.promise().query(`SELECT skills.*, students.name AS student_name, students.user_id
+      FROM skills JOIN students ON students.student_id = skills.student_id
+      WHERE skills.skill_name LIKE ? OR students.name LIKE ? OR students.user_id LIKE ?
+      ORDER BY skills.skill_id DESC`, [search, search, search]);
+    res.status(200).json({ success: true, skills });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.post("/api/admin/skills", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const skill = getValidatedSkillData(req.body);
+  if (skill.error) return res.status(400).json({ success: false, message: skill.error });
+  try {
+    const [students] = await pool.promise().query("SELECT student_id FROM students WHERE student_id = ?", [skill.studentId]);
+    if (!students.length) return res.status(404).json({ success: false, message: "Student not found" });
+    const [result] = await pool.promise().query("INSERT INTO skills (student_id, skill_name, skill_type, proficiency) VALUES (?, ?, ?, ?)", [skill.studentId, skill.skillName, skill.skillType, skill.proficiency]);
+    res.status(201).json({ success: true, skill: { skill_id: result.insertId, student_id: skill.studentId, skill_name: skill.skillName, skill_type: skill.skillType, proficiency: skill.proficiency } });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.put("/api/admin/skills/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const skillId = getStudentId(req.params.id);
+  const skill = getValidatedSkillData(req.body);
+  if (!skillId) return res.status(400).json({ success: false, message: "Invalid skill ID" });
+  if (skill.error) return res.status(400).json({ success: false, message: skill.error });
+  try {
+    const [students] = await pool.promise().query("SELECT student_id FROM students WHERE student_id = ?", [skill.studentId]);
+    if (!students.length) return res.status(404).json({ success: false, message: "Student not found" });
+    const [result] = await pool.promise().query("UPDATE skills SET student_id = ?, skill_name = ?, skill_type = ?, proficiency = ? WHERE skill_id = ?", [skill.studentId, skill.skillName, skill.skillType, skill.proficiency, skillId]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Skill not found" });
+    res.status(200).json({ success: true, message: "Skill updated" });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.delete("/api/admin/skills/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const skillId = getStudentId(req.params.id);
+  if (!skillId || getStudentId(req.body.confirm_skill_id) !== skillId) return res.status(400).json({ success: false, message: "Confirm the exact skill ID before deleting" });
+  try {
+    const [result] = await pool.promise().query("DELETE FROM skills WHERE skill_id = ?", [skillId]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Skill not found" });
+    res.status(200).json({ success: true, message: "Skill deleted" });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/exchanges", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const [exchanges] = await pool.promise().query(`SELECT exchange_requests.*, sender.name AS sender_name, sender.user_id AS sender_user_id,
+      receiver.name AS receiver_name, receiver.user_id AS receiver_user_id
+      FROM exchange_requests JOIN students AS sender ON sender.student_id = exchange_requests.sender_id
+      JOIN students AS receiver ON receiver.student_id = exchange_requests.receiver_id ORDER BY request_id DESC`);
+    res.status(200).json({ success: true, exchanges });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/exchanges/:id", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const requestId = getStudentId(req.params.id);
+  if (!requestId) return res.status(400).json({ success: false, message: "Invalid exchange ID" });
+  try {
+    const [exchanges] = await pool.promise().query(`SELECT exchange_requests.*, sender.name AS sender_name, receiver.name AS receiver_name
+      FROM exchange_requests JOIN students AS sender ON sender.student_id = exchange_requests.sender_id
+      JOIN students AS receiver ON receiver.student_id = exchange_requests.receiver_id WHERE request_id = ?`, [requestId]);
+    if (!exchanges.length) return res.status(404).json({ success: false, message: "Exchange not found" });
+    res.status(200).json({ success: true, exchange: exchanges[0] });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/notifications", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const [notifications] = await pool.promise().query(`SELECT notifications.notification_id, notifications.type, notifications.message,
+      notifications.related_request_id, notifications.is_read, notifications.created_at, students.student_id, students.name AS student_name
+      FROM notifications JOIN students ON students.student_id = notifications.student_id ORDER BY notifications.created_at DESC LIMIT 200`);
+    res.status(200).json({ success: true, notifications });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
+
+app.get("/api/admin/profile", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  res.status(200).json({ success: true, admin });
+});
+
+app.put("/api/admin/profile", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { name, email, department, year } = req.body;
+  if (!name || !email) return res.status(400).json({ success: false, message: "Name and email are required" });
+  try {
+    await pool.promise().query("UPDATE students SET name = ?, email = ?, department = ?, year = ? WHERE student_id = ?", [String(name).trim(), String(email).trim(), department || null, year || null, admin.student_id]);
+    const [students] = await pool.promise().query(`SELECT ${publicStudentFields} FROM students WHERE student_id = ?`, [admin.student_id]);
+    res.status(200).json({ success: true, admin: students[0] });
+  } catch (error) {
+    handleDatabaseError(error, res);
   }
 });
 
