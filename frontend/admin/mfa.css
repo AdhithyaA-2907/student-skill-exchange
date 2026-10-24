@@ -1,0 +1,14 @@
+label[hidden]{display:none!important}
+.mfa-page{align-items:center;background:radial-gradient(circle at top right,#ddd7ff,#f8f7fb 55%);display:flex;justify-content:center;min-height:100vh;padding:24px}
+.mfa-card{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 20px 60px #332a6522;display:grid;gap:16px;max-width:520px;padding:36px;width:100%}
+.mfa-card h1{font-size:28px;margin:0}
+.mfa-card>p:not(.eyebrow){color:var(--muted);line-height:1.55;margin:0}
+.mfa-instructions{background:#f1efff;border-radius:9px;color:#5145a2;padding:12px}
+.mfa-provisioning{border-top:1px solid var(--line);display:grid;gap:12px;padding-top:18px}
+.mfa-provisioning img{background:#fff;border:1px solid var(--line);border-radius:10px;justify-self:center;padding:8px;width:240px}
+.manual-key-label{font-size:12px;font-weight:800;margin:0}
+#mfa-manual-key{background:#f8f7fb;border-radius:8px;letter-spacing:.12em;overflow-wrap:anywhere;padding:12px;text-align:center;user-select:all}
+#mfa-verify-form{display:grid;gap:12px}
+#mfa-verify-form label{color:#5d5668;display:grid;font-size:12px;font-weight:750;gap:6px}
+#mfa-verify-form input{border:1px solid #dcd7e8;border-radius:9px;font:inherit;letter-spacing:.2em;padding:11px}
+.mfa-dashboard-link{color:var(--brand);font-size:12px;text-align:center}

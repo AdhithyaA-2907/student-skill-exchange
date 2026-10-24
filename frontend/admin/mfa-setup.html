@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up Authenticator MFA | SkillSwap</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+  <link rel="stylesheet" href="/admin/mfa.css">
+</head>
+<body class="mfa-page">
+  <main class="mfa-card">
+    <p class="eyebrow">SKILLSWAP · ADMIN SECURITY</p>
+    <h1>Set up Authenticator MFA</h1>
+    <p>Use Google Authenticator or Microsoft Authenticator. Add SkillSwap by scanning this QR code, or enter the manual key.</p>
+    <div id="mfa-status" class="form-error" role="status" aria-live="polite"></div>
+    <button id="mfa-start" class="primary" type="button" hidden>Show setup QR code</button>
+    <section id="mfa-provisioning" class="mfa-provisioning" hidden>
+      <img id="mfa-qr" alt="Authenticator app setup QR code">
+      <p class="manual-key-label">Manual setup key</p>
+      <code id="mfa-manual-key"></code>
+      <p>Enter the current 6-digit code from your authenticator app to enable MFA.</p>
+      <form id="mfa-verify-form">
+        <label>6-digit verification code<input name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+        <button class="primary" type="submit">Enable MFA</button>
+      </form>
+    </section>
+    <a class="mfa-dashboard-link" href="/admin/dashboard">Return to Admin Dashboard</a>
+  </main>
+  <script src="/admin/mfa-setup.js"></script>
+</body>
+</html>

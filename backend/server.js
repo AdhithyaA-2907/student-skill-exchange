@@ -5,6 +5,8 @@ const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
 const bcrypt = require("bcryptjs");
+const { authenticator } = require("otplib");
+const QRCode = require("qrcode");
 const { createHash, randomBytes, scrypt, timingSafeEqual } = require("crypto");
 const { promisify } = require("util");
 
@@ -18,6 +20,8 @@ const publicStudentFields = "student_id, user_id, name, email, department, year,
 const sessionStudentFields = "students.student_id, students.user_id, students.name, students.email, students.department, students.year, students.role";
 const SESSION_DURATION_DAYS = 7;
 const BCRYPT_SALT_ROUNDS = 12;
+const TOTP_ISSUER = "SkillSwap";
+authenticator.options = { step: 30, digits: 6, window: 1 };
 
 // Allow requests from the frontend and accept JSON request bodies.
 app.use(cors());
@@ -254,7 +258,7 @@ function createLoginHandler(adminOnly = false) {
   }
 
   const loginSql = adminOnly
-    ? `SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ? OR email = ? LIMIT 1`
+    ? `SELECT ${publicStudentFields}, password_hash, totp_secret, totp_enabled FROM students WHERE user_id = ? OR email = ? LIMIT 1`
     : `SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ?`;
   const loginValues = adminOnly ? [identifier, identifier] : [identifier];
 
@@ -268,6 +272,16 @@ function createLoginHandler(adminOnly = false) {
       }
       if (adminOnly && student.role !== "admin") {
         return res.status(403).json({ success: false, message: "Administrator access is required" });
+      }
+      if (adminOnly && student.totp_enabled) {
+        const code = String(req.body.totp_code || "").replace(/\s/g, "");
+        if (!/^\d{6}$/.test(code) || !authenticator.check(code, student.totp_secret || "")) {
+          return res.status(401).json({
+            success: false,
+            code: "MFA_REQUIRED",
+            message: "Enter a valid 6-digit Authenticator code"
+          });
+        }
       }
 
       // Upgrade a verified legacy account one at a time; never overwrite unknown values.
@@ -283,10 +297,10 @@ function createLoginHandler(adminOnly = false) {
       return res.status(500).json({ success: false, message: "Unable to verify credentials" });
     }
 
-    const { password_hash, ...safeStudent } = student;
+    const { password_hash, totp_secret, totp_enabled, ...safeStudent } = student;
     try {
       const sessionToken = await createSession(safeStudent.student_id);
-      return res.status(200).json({ success: true, session_token: sessionToken, student: safeStudent });
+      return res.status(200).json({ success: true, session_token: sessionToken, student: { ...safeStudent, ...(adminOnly ? { totp_enabled: Boolean(totp_enabled) } : {}) } });
     } catch (sessionError) {
       console.error("Session creation failed:", sessionError.message);
       return res.status(500).json({ success: false, message: "Unable to start a session" });
@@ -299,6 +313,79 @@ function createLoginHandler(adminOnly = false) {
 app.post("/api/auth/login", createLoginHandler());
 // Separate entry point for the Admin/Supervisor application.
 app.post("/api/admin/login", createLoginHandler(true));
+
+// MFA setup secrets are provisioned only to the currently authenticated administrator.
+app.get("/api/admin/mfa/status", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const [[account]] = await pool.promise().query(
+      "SELECT totp_enabled FROM students WHERE student_id = ?",
+      [admin.student_id]
+    );
+    if (!account) return res.status(404).json({ success: false, message: "Administrator account not found" });
+    res.status(200).json({ success: true, enabled: Boolean(account.totp_enabled) });
+  } catch (error) {
+    console.error("Authenticator status lookup failed:", error.message);
+    res.status(500).json({ success: false, message: "Unable to check authenticator settings" });
+  }
+});
+
+app.post("/api/admin/mfa/setup", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const [[account]] = await pool.promise().query(
+      "SELECT totp_enabled FROM students WHERE student_id = ?",
+      [admin.student_id]
+    );
+    if (!account) return res.status(404).json({ success: false, message: "Administrator account not found" });
+    if (account.totp_enabled) return res.status(409).json({ success: false, message: "Authenticator MFA is already enabled" });
+
+    const secret = authenticator.generateSecret();
+    const otpauthUrl = authenticator.keyuri(admin.user_id, TOTP_ISSUER, secret);
+    const qrCode = await QRCode.toDataURL(otpauthUrl, { errorCorrectionLevel: "M", margin: 2, width: 240 });
+    await pool.promise().query(
+      "UPDATE students SET totp_secret = ?, totp_enabled = 0 WHERE student_id = ?",
+      [secret, admin.student_id]
+    );
+    return res.status(200).json({
+      success: true,
+      qr_code: qrCode,
+      manual_key: secret,
+      message: "Scan the QR code or enter the setup key in your authenticator app"
+    });
+  } catch (error) {
+    console.error("Authenticator setup failed:", error.message);
+    return res.status(500).json({ success: false, message: "Unable to prepare authenticator setup" });
+  }
+});
+
+app.post("/api/admin/mfa/enable", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const code = String(req.body.code || "").replace(/\s/g, "");
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ success: false, message: "Enter a 6-digit Authenticator code" });
+  try {
+    const [[account]] = await pool.promise().query(
+      "SELECT totp_secret, totp_enabled FROM students WHERE student_id = ?",
+      [admin.student_id]
+    );
+    if (!account) return res.status(404).json({ success: false, message: "Administrator account not found" });
+    if (account.totp_enabled) return res.status(409).json({ success: false, message: "Authenticator MFA is already enabled" });
+    if (!account.totp_secret || !authenticator.check(code, account.totp_secret)) {
+      return res.status(400).json({ success: false, message: "That Authenticator code is invalid or expired" });
+    }
+    await pool.promise().query(
+      "UPDATE students SET totp_enabled = 1 WHERE student_id = ? AND totp_enabled = 0",
+      [admin.student_id]
+    );
+    return res.status(200).json({ success: true, message: "Authenticator MFA is enabled" });
+  } catch (error) {
+    console.error("Authenticator verification failed:", error.message);
+    return res.status(500).json({ success: false, message: "Unable to verify the Authenticator code" });
+  }
+});
 
 // This is the only registration route that creates an administrator account.
 // The role is set by the server; client-supplied role values are ignored.

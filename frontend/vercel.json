@@ -8,6 +8,7 @@
     { "source": "/admin/exchanges", "destination": "/admin/exchanges.html" },
     { "source": "/admin/notifications", "destination": "/admin/notifications.html" },
     { "source": "/admin/profile", "destination": "/admin/profile.html" },
+    { "source": "/admin/mfa-setup", "destination": "/admin/mfa-setup.html" },
     { "source": "/admin", "destination": "/admin/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

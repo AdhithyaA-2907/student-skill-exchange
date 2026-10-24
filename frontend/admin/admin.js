@@ -1,5 +1,7 @@
 // SkillSwap Admin Console: a separate UI using the existing Bearer-token session API.
-const API = "https://student-skill-exchange-api.onrender.com/api";
+const API = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ? "http://localhost:5000/api"
+  : "https://student-skill-exchange-api.onrender.com/api";
 const TOKEN_KEY = "studentSkillExchange.adminSessionToken";
 const state = { token: localStorage.getItem(TOKEN_KEY) || "", admin: null, students: [], skills: [] };
 const $ = (selector) => document.querySelector(selector);
@@ -15,7 +17,8 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.message || "The request could not be completed.");
     error.status = response.status;
-    console.error("Admin API error", { path, status: response.status, response: data });
+    error.code = data.code;
+    console.error("Admin API error", { path, status: response.status, code: data.code });
     throw error;
   }
   return data;
@@ -109,8 +112,16 @@ function bindLoginPage() {
     try {
       const response = await api("/admin/login", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
       state.token = response.session_token; state.admin = response.student; localStorage.setItem(TOKEN_KEY, state.token);
-      goTo("/admin/dashboard");
-    } catch (error) { $("#login-error").textContent = error.message; }
+      goTo(response.student.totp_enabled ? "/admin/dashboard" : "/admin/mfa-setup");
+    } catch (error) {
+      if (error.code === "MFA_REQUIRED") {
+        const field = $("#authenticator-field");
+        field.hidden = false;
+        field.querySelector("input").required = true;
+        field.querySelector("input").focus();
+      }
+      $("#login-error").textContent = error.message;
+    }
   });
 }
 
