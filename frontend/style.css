@@ -71,3 +71,8 @@ body.page-my-skills .dashboard-content, body.page-discover .dashboard-content, b
 /* ---------- Discover search and filters ---------- */
 .discover-filters { display:grid; gap:10px; grid-template-columns:2fr repeat(3,1fr); margin:-4px 0 20px; }.discover-filters input,.discover-filters select { background:#fff; border:1px solid #ded9ec; border-radius:9px; color:var(--ink); font-size:.75rem; min-height:38px; outline-color:var(--primary); padding:.45rem .65rem; }.discover-filters input::placeholder { color:#9791a3; }
 @media (max-width:850px) { .discover-filters { grid-template-columns:1fr 1fr; } }.partner-details { color:var(--muted); font-size:.65rem; margin:-5px 0 12px; } @media (max-width:620px) { .discover-filters { grid-template-columns:1fr; } }
+
+/* Clear alternate path below the student sign-in button. */
+.login-path-link { color:var(--muted); font-size:.8rem; margin:0; text-align:center; }
+.login-path-link a { color:var(--primary); font-weight:750; }
+.auth-admin-link { color:var(--primary); font-size:.82rem; font-weight:750; text-align:center; }

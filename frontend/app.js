@@ -170,6 +170,7 @@ function showAuthGate(status, message) {
   const detail = byId("#auth-gate-message");
   byId("#auth-login-button").hidden = status !== "UNAUTHENTICATED";
   byId("#auth-create-button").hidden = status !== "UNAUTHENTICATED";
+  byId("#auth-admin-link").hidden = status !== "UNAUTHENTICATED";
   byId("#auth-retry-button").hidden = status !== "ERROR";
   if (status === "AUTHENTICATED") { gate.hidden = true; return; }
   gate.hidden = false;

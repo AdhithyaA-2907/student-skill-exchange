@@ -244,13 +244,21 @@ app.get("/api/students/:id", (req, res) => {
 // Reuses the existing password/session flow for both student and administrator sign-in.
 function createLoginHandler(adminOnly = false) {
   return (req, res) => {
+  // Student sign-in keeps its existing User ID behaviour. Admins may use User ID or email.
   const userId = String(req.body.user_id || "").trim();
+  const email = String(req.body.email || "").trim();
+  const identifier = adminOnly ? userId || email : userId;
   const password = req.body.password;
-  if (!userId || !password) {
-    return res.status(400).json({ success: false, message: "User ID and password are required" });
+  if (!identifier || !password) {
+    return res.status(400).json({ success: false, message: adminOnly ? "User ID or email and password are required" : "User ID and password are required" });
   }
 
-  pool.query(`SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ?`, [userId], async (error, students) => {
+  const loginSql = adminOnly
+    ? `SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ? OR email = ? LIMIT 1`
+    : `SELECT ${publicStudentFields}, password_hash FROM students WHERE user_id = ?`;
+  const loginValues = adminOnly ? [identifier, identifier] : [identifier];
+
+  pool.query(loginSql, loginValues, async (error, students) => {
     if (error) return handleDatabaseError(error, res);
     const student = students[0];
 
@@ -291,6 +299,36 @@ function createLoginHandler(adminOnly = false) {
 app.post("/api/auth/login", createLoginHandler());
 // Separate entry point for the Admin/Supervisor application.
 app.post("/api/admin/login", createLoginHandler(true));
+
+// This is the only registration route that creates an administrator account.
+// The role is set by the server; client-supplied role values are ignored.
+app.post("/api/admin/register", async (req, res) => {
+  const { user_id, password, confirm_password, name, email } = req.body;
+  const userId = String(user_id || "").trim();
+  const adminName = String(name || "").trim();
+  const adminEmail = String(email || "").trim();
+  if (!userId || !password || !confirm_password || !adminName || !adminEmail) {
+    return res.status(400).json({ success: false, message: "Name, User ID, email, password, and confirmation are required" });
+  }
+  if (password !== confirm_password) {
+    return res.status(400).json({ success: false, message: "Password confirmation does not match" });
+  }
+
+  try {
+    const passwordHash = await hashPassword(password);
+    const [result] = await pool.promise().query(
+      "INSERT INTO students (user_id, password_hash, role, name, email) VALUES (?, ?, 'admin', ?, ?)",
+      [userId, passwordHash, adminName, adminEmail]
+    );
+    res.status(201).json({
+      success: true,
+      message: "Admin account created successfully. Please sign in.",
+      admin: { student_id: result.insertId, user_id: userId, name: adminName, email: adminEmail, role: "admin" }
+    });
+  } catch (error) {
+    handleDatabaseError(error, res);
+  }
+});
 
 // Verify a saved token before the frontend displays an authenticated dashboard.
 app.get("/api/auth/session", async (req, res) => {

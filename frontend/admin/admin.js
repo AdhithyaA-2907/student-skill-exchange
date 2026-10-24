@@ -100,15 +100,18 @@ async function renderProfile() {
 const views = { dashboard: renderDashboard, students: renderStudents, skills: renderSkills, exchanges: renderExchanges, notifications: renderNotifications, profile: renderProfile };
 async function renderRoute() {
   const path = location.pathname.replace(/\/$/, ""); const view = path.split("/").pop();
-  if (path === "/admin/login" || !state.token) { $("#admin-login").hidden = false; $("#admin-app").hidden = true; return; }
+  const isRegisterPage = path === "/admin/register";
+  if (path === "/admin/login" || isRegisterPage) { $("#admin-login").hidden = isRegisterPage; $("#admin-register").hidden = !isRegisterPage; $("#admin-app").hidden = true; return; }
+  if (!state.token) { history.replaceState({}, "", "/admin/login"); return renderRoute(); }
   const renderer = views[view] || renderDashboard;
-  $("#admin-login").hidden = true; $("#admin-app").hidden = false;
+  $("#admin-login").hidden = true; $("#admin-register").hidden = true; $("#admin-app").hidden = false;
   $("#admin-name").textContent = state.admin ? state.admin.name : "Administrator";
   document.querySelectorAll("[data-route]").forEach(button => button.classList.toggle("active", button.dataset.route === (views[view] ? view : "dashboard")));
   try { await renderer(); } catch (error) { if (error.status === 401 || error.status === 403) { state.token = ""; localStorage.removeItem(TOKEN_KEY); history.replaceState({}, "", "/admin/login"); return renderRoute(); } $("#admin-content").innerHTML = `<div class="empty">${safe(error.message)}</div>`; }
 }
 
 $("#admin-login-form").addEventListener("submit", async event => { event.preventDefault(); $("#login-error").textContent = ""; const body = Object.fromEntries(new FormData(event.currentTarget)); try { const response = await api("/admin/login", { method: "POST", body: JSON.stringify(body) }); state.token = response.session_token; state.admin = response.student; localStorage.setItem(TOKEN_KEY, state.token); history.pushState({}, "", "/admin/dashboard"); renderRoute(); } catch (error) { $("#login-error").textContent = error.message; } });
+$("#admin-register-form").addEventListener("submit", async event => { event.preventDefault(); $("#register-error").textContent = ""; $("#register-success").hidden = true; const form = event.currentTarget; const data = Object.fromEntries(new FormData(form)); if (data.password !== data.confirm_password) { $("#register-error").textContent = "Password confirmation does not match"; return; } const button = form.querySelector("button[type=submit]"); button.disabled = true; try { await api("/admin/register", { method: "POST", body: JSON.stringify(data) }); form.reset(); $("#register-success").hidden = false; $("#register-login-link").hidden = false; } catch (error) { $("#register-error").textContent = error.message; } finally { button.disabled = false; } });
 document.querySelectorAll("[data-route]").forEach(button => button.addEventListener("click", () => { history.pushState({}, "", routePath(button.dataset.route)); renderRoute(); }));
 $("#admin-logout").addEventListener("click", async () => { try { await api("/auth/logout", { method: "POST" }); } catch (error) { console.error("Admin logout failed", error); } state.token = ""; localStorage.removeItem(TOKEN_KEY); history.pushState({}, "", "/admin/login"); renderRoute(); });
 document.addEventListener("click", event => { const target = event.target; if (target.dataset.viewStudent) showStudent(Number(target.dataset.viewStudent)); if (target.dataset.editStudent) editStudent(Number(target.dataset.editStudent)); if (target.dataset.deleteStudent) deleteStudent(Number(target.dataset.deleteStudent)); if (target.dataset.editSkill) editSkill(Number(target.dataset.editSkill)); if (target.dataset.deleteSkill) deleteSkill(Number(target.dataset.deleteSkill)); });

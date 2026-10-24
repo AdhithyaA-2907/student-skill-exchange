@@ -10,13 +10,33 @@
   <main id="admin-login" class="login-shell">
     <form id="admin-login-form" class="login-card">
       <p class="eyebrow">SKILLSWAP · SUPERVISOR</p>
-      <h1>Admin sign in</h1>
+      <h1>Admin / Supervisor Login</h1>
       <p>Use an administrator account to manage the SkillSwap platform.</p>
-      <label>User ID<input name="user_id" required maxlength="50" autocomplete="username"></label>
+      <label>User ID or email<input name="user_id" required maxlength="100" autocomplete="username"></label>
       <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
       <p id="login-error" class="form-error" role="alert"></p>
-      <button class="primary" type="submit">Sign in securely</button>
-      <a href="/">Return to student platform</a>
+      <button class="primary" type="submit">Sign In</button>
+      <a href="/admin/register">Don't have an Admin account? Create one</a>
+      <a href="/">Back to Student Login</a>
+    </form>
+  </main>
+
+  <!-- Dedicated registration creates an admin role only through the controlled server route. -->
+  <main id="admin-register" class="login-shell" hidden>
+    <form id="admin-register-form" class="login-card">
+      <p class="eyebrow">SKILLSWAP · SUPERVISOR</p>
+      <h1>Create Admin Account</h1>
+      <p>Create an Admin/Supervisor account, then sign in to the Admin Dashboard.</p>
+      <label>Name<input name="name" required maxlength="100" autocomplete="name"></label>
+      <label>User ID<input name="user_id" required maxlength="50" autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+      <label>Email<input name="email" type="email" required maxlength="100" autocomplete="email"></label>
+      <label>Confirm Password<input name="confirm_password" type="password" required autocomplete="new-password"></label>
+      <p id="register-error" class="form-error" role="alert"></p>
+      <p id="register-success" class="form-success" role="status" hidden>Admin account created successfully. Please sign in.</p>
+      <button class="primary" type="submit">Create Admin Account</button>
+      <a id="register-login-link" href="/admin/login" hidden>Go to Admin Login</a>
+      <a href="/admin/login">Back to Admin Login</a>
     </form>
   </main>
 

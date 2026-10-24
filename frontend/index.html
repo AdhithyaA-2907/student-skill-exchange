@@ -15,7 +15,7 @@
       <p class="eyebrow muted">SKILLSWAP</p>
       <h1 id="auth-gate-title">Checking your session…</h1>
       <p id="auth-gate-message">Please wait while we securely load your profile.</p>
-      <div class="auth-gate-actions"><button class="button button-primary" id="auth-login-button" type="button" hidden>Log in</button><button class="text-link" id="auth-retry-button" type="button" hidden>Try again</button><button class="text-link" id="auth-create-button" type="button" hidden>Create a profile</button></div>
+      <div class="auth-gate-actions"><button class="button button-primary" id="auth-login-button" type="button" hidden>Sign in as Student</button><button class="text-link" id="auth-retry-button" type="button" hidden>Try again</button><button class="text-link" id="auth-create-button" type="button" hidden>Create a profile</button><a class="auth-admin-link" id="auth-admin-link" href="/admin/login" hidden>Admin / Supervisor? Sign in here</a></div>
     </div>
   </section>
   <!-- Main navigation for the dashboard sections and profile creation. -->
@@ -147,10 +147,10 @@
   <dialog class="modal" id="login-modal">
     <form class="modal-card" id="login-form">
       <button class="modal-close" type="button" data-close-modal aria-label="Close form">×</button>
-      <p class="eyebrow muted">SWITCH PROFILE</p><h2>Log in to your profile</h2><p class="form-intro">Enter your User ID and password to securely switch profiles.</p>
+      <p class="eyebrow muted">STUDENT LOGIN</p><h2>Sign in as Student</h2><p class="form-intro">Enter your User ID and password to access your student profile.</p>
       <label>User ID<input name="user_id" type="text" maxlength="50" required autocomplete="username"></label>
       <label>Password<span class="password-input"><input id="login-password" name="password" type="password" required autocomplete="current-password"><button class="password-toggle" type="button" data-toggle-password="login-password" aria-label="Show password" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.6"></circle><path class="eye-slash" d="m4 4 16 16"></path></svg></button></span></label>
-      <p class="form-error" id="login-form-error"></p><button class="button button-primary form-submit" type="submit">Switch User</button>
+      <p class="form-error" id="login-form-error"></p><button class="button button-primary form-submit" type="submit">Sign in as Student</button><p class="login-path-link">Are you an Admin/Supervisor? <a href="/admin/login">Sign in here</a></p>
     </form>
   </dialog>
 
