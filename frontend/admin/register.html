@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create SkillSwap Admin Account</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body data-admin-page="register">
+  <!-- This document contains only the Admin Registration page. -->
+  <main class="login-shell">
+    <form id="admin-register-form" class="login-card">
+      <p class="eyebrow">SKILLSWAP · SUPERVISOR</p>
+      <h1>Create Admin Account</h1>
+      <p>Create an Admin/Supervisor account, then sign in to the Admin Dashboard.</p>
+      <label>Name<input name="name" required maxlength="100" autocomplete="name"></label>
+      <label>Admin User ID<input name="user_id" required maxlength="50" autocomplete="username"></label>
+      <label>Email<input name="email" type="email" required maxlength="100" autocomplete="email"></label>
+      <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+      <label>Confirm Password<input name="confirm_password" type="password" required autocomplete="new-password"></label>
+      <p id="register-error" class="form-error" role="alert"></p>
+      <button class="primary" type="submit">Create Admin Account</button>
+      <a href="/admin/login">Back to Admin Login</a>
+      <a href="/">Back to Student Login</a>
+    </form>
+  </main>
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

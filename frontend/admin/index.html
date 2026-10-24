@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SkillSwap Admin</title>
+  <title>SkillSwap Admin Login</title>
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
-<body>
-  <main id="admin-login" class="login-shell">
+<body data-admin-page="login">
+  <!-- This document contains only the Admin Login page. -->
+  <main class="login-shell">
     <form id="admin-login-form" class="login-card">
       <p class="eyebrow">SKILLSWAP · SUPERVISOR</p>
       <h1>Admin / Supervisor Login</h1>
@@ -15,53 +16,12 @@
       <label>User ID or email<input name="user_id" required maxlength="100" autocomplete="username"></label>
       <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
       <p id="login-error" class="form-error" role="alert"></p>
+      <p id="login-success" class="form-success" role="status" hidden>Admin account created successfully. Please sign in.</p>
       <button class="primary" type="submit">Sign In</button>
-      <!-- Use the Admin SPA route so the registration view opens immediately. -->
-      <a id="admin-register-link" href="/admin/register">Don't have an Admin account? Create one</a>
+      <a href="/admin/register">Don't have an Admin account? Create one</a>
       <a href="/">Back to Student Login</a>
     </form>
   </main>
-
-  <!-- Dedicated registration creates an admin role only through the controlled server route. -->
-  <main id="admin-register" class="login-shell" hidden>
-    <form id="admin-register-form" class="login-card">
-      <p class="eyebrow">SKILLSWAP · SUPERVISOR</p>
-      <h1>Create Admin Account</h1>
-      <p>Create an Admin/Supervisor account, then sign in to the Admin Dashboard.</p>
-      <label>Name<input name="name" required maxlength="100" autocomplete="name"></label>
-      <label>User ID<input name="user_id" required maxlength="50" autocomplete="username"></label>
-      <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
-      <label>Email<input name="email" type="email" required maxlength="100" autocomplete="email"></label>
-      <label>Confirm Password<input name="confirm_password" type="password" required autocomplete="new-password"></label>
-      <p id="register-error" class="form-error" role="alert"></p>
-      <p id="register-success" class="form-success" role="status" hidden>Admin account created successfully. Please sign in.</p>
-      <button class="primary" type="submit">Create Admin Account</button>
-      <a id="register-login-link" href="/admin/login" hidden>Go to Admin Login</a>
-      <a href="/admin/login">Back to Admin Login</a>
-    </form>
-  </main>
-
-  <div id="admin-app" hidden>
-    <aside class="sidebar">
-      <a class="brand" href="/admin/dashboard">Skill<span>Swap</span><small>ADMIN CONSOLE</small></a>
-      <nav aria-label="Admin navigation">
-        <button data-route="dashboard">▦ Dashboard</button>
-        <button data-route="students">♙ Students</button>
-        <button data-route="skills">✦ Skills</button>
-        <button data-route="exchanges">⇄ Skill Exchanges</button>
-        <button data-route="notifications">◉ Notifications</button>
-        <button data-route="profile">◌ Admin Profile</button>
-      </nav>
-      <button id="admin-logout" class="logout">Sign out</button>
-    </aside>
-    <section class="workspace">
-      <header><div><p class="eyebrow" id="page-kicker">SUPERVISOR AREA</p><h1 id="page-title">Dashboard</h1></div><div id="admin-name" class="admin-identity"></div></header>
-      <div id="admin-message" class="message" hidden></div>
-      <section id="admin-content" aria-live="polite"><div class="loading">Loading administration data…</div></section>
-    </section>
-  </div>
-
-  <dialog id="admin-dialog"><form method="dialog" class="dialog-card"><button class="close" value="cancel" aria-label="Close">×</button><div id="dialog-content"></div></form></dialog>
   <script src="/admin/admin.js"></script>
 </body>
 </html>
